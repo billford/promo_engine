@@ -13,34 +13,39 @@ def _headers(api_key: str) -> dict:
 
 
 def _get_accounts(api_key: str) -> dict[str, str]:
-    """Return {platform_name_lower: account_id} for all connected accounts."""
-    url = f"{PUBLORA_BASE_URL}/accounts"
+    """Return {platform_name_lower: platformId} for all connected accounts."""
+    url = f"{PUBLORA_BASE_URL}/platform-connections"
     try:
         resp = requests.get(url, headers=_headers(api_key), timeout=15)
     except requests.RequestException as exc:
-        print(f"ERROR: Publora /accounts network failure: {exc}", file=sys.stderr)
+        print(f"ERROR: Publora /platform-connections network failure: {exc}", file=sys.stderr)
         sys.exit(1)
 
     if resp.status_code != 200:
-        print(f"ERROR: Publora /accounts returned {resp.status_code}: {resp.text}", file=sys.stderr)
+        print(f"ERROR: Publora /platform-connections returned {resp.status_code}: {resp.text}", file=sys.stderr)
         sys.exit(1)
 
     accounts = {}
-    for account in resp.json():
-        name = account.get("platform", account.get("name", "")).lower()
-        account_id = account.get("id") or account.get("accountId")
-        if name and account_id:
-            accounts[name] = account_id
+    for conn in resp.json().get("connections", []):
+        platform_id = conn.get("platformId") or ""
+        if not platform_id:
+            continue
+        # Match by platformId prefix, e.g. "linkedin-n2c6artUXk" -> "linkedin"
+        platform_name = platform_id.split("-")[0].lower()
+        accounts[platform_name] = platform_id
 
     return accounts
 
 
 def _scheduled_time_utc(local_tz: str) -> str:
     tz = ZoneInfo(local_tz)
-    today = datetime.now(tz).date()
-    local_dt = datetime(today.year, today.month, today.day, POST_HOUR, 0, 0, tzinfo=tz)
-    utc_dt = local_dt.astimezone(timezone.utc)
-    return utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = datetime.now(tz)
+    target = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
+    if target <= now:
+        from datetime import timedelta
+        target += timedelta(days=1)
+    utc_dt = target.astimezone(timezone.utc)
+    return utc_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _post_once(api_key: str, payload: dict) -> dict:
@@ -81,7 +86,7 @@ def schedule_post(
         sys.exit(1)
 
     data = resp.json()
-    return data.get("id") or data.get("postId") or ""
+    return data.get("postGroupId") or ""
 
 
 def run_publora(

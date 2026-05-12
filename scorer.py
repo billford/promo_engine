@@ -9,16 +9,21 @@ from config import CLAUDE_MODEL, COOLDOWN_DAYS
 from db import get_eligible_content, get_oldest_content_by_platform, get_recent_post_history, get_recently_selected_ids
 
 
+LINKEDIN_EXCLUDE_PATTERNS = [
+    "conspiracy corner", "haunted", "paranormal", "ghost", "ufo", "alien",
+    "cryptid", "bigfoot", "urban legend", "supernatural", "occult", "curse",
+]
+
 SCORING_SYSTEM_PROMPT = """\
 You are a content promotion strategist for a semi-retired cybersecurity professional and tech writer.
-The author publishes at medium.com/@billfordx and youtube.com/@billfordx (Conspiracy Corner channel).
-Topics: AI skepticism, cybersecurity, pop culture commentary, paranormal/conspiracy.
+The author publishes at medium.com/@billfordx. Topics appropriate for LinkedIn: AI skepticism,
+cybersecurity, technology, leadership, pop culture commentary, career, and general opinion pieces.
 
-Your job: pick one piece of content from the catalog to promote today across LinkedIn and Bluesky.
+Your job: pick one piece of content from the catalog to promote today on LinkedIn.
 
 Scoring criteria (apply in order of weight):
 1. Evergreen value — prefer content that doesn't go stale over time-sensitive posts
-2. Platform fit — AI/cybersecurity/tech/pop culture skew well on LinkedIn; conspiracy/paranormal/urban legend skew well on Bluesky
+2. Professional relevance — AI/cybersecurity/tech/leadership/career topics perform best on LinkedIn
 3. YouTube boost — YouTube videos are underused on text-based platforms and get a scoring boost
 4. Variety — avoid the same topic category as recent posts (check recent history provided)
 5. Engagement hook — strong opinion, surprising claim, or provocative question in title/description
@@ -81,6 +86,17 @@ def pick_content(conn: sqlite3.Connection, config: dict, platforms: list[str] | 
     # Exclude anything selected in the last 7 days, dry run or not
     recently_selected = get_recently_selected_ids(conn, days=7)
     eligible_items = [v for k, v in merged.items() if k in eligible_ids and k not in recently_selected]
+
+    # Filter out LinkedIn-inappropriate content by title keywords
+    def is_linkedin_appropriate(item: dict) -> bool:
+        text = (item.get("title", "") + " " + item.get("description", "")).lower()
+        return not any(pat in text for pat in LINKEDIN_EXCLUDE_PATTERNS)
+
+    filtered_items = [i for i in eligible_items if is_linkedin_appropriate(i)]
+    if filtered_items:
+        eligible_items = filtered_items
+    else:
+        print("NOTE: All eligible content matched exclusion filter — using unfiltered list.", file=sys.stderr)
 
     if not eligible_items:
         # Cooldown reset: fall back to oldest items
