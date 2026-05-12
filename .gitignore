@@ -1,0 +1,5 @@
+.venv/
+.env
+promo_engine.db
+__pycache__/
+*.pyc

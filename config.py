@@ -1,0 +1,29 @@
+import os
+import sys
+from dotenv import load_dotenv
+
+load_dotenv()
+
+REQUIRED_KEYS = ["ANTHROPIC_API_KEY", "PUBLORA_API_KEY"]
+
+CLAUDE_MODEL = "claude-opus-4-7"
+MEDIUM_RSS_URL = "https://medium.com/feed/@billfordx"
+YOUTUBE_CHANNEL_HANDLE = "@billfordx"
+PUBLORA_BASE_URL = "https://api.publora.com/api/v1"
+POST_HOUR = 9
+COOLDOWN_DAYS = 30
+
+
+def load_config() -> dict:
+    missing = [k for k in REQUIRED_KEYS if not os.getenv(k)]
+    if missing:
+        print(f"Missing required environment variable(s): {', '.join(missing)}", file=sys.stderr)
+        sys.exit(1)
+
+    return {
+        "anthropic_api_key": os.environ["ANTHROPIC_API_KEY"],
+        "youtube_api_key": os.getenv("YOUTUBE_API_KEY"),
+        "publora_api_key": os.environ["PUBLORA_API_KEY"],
+        "timezone": os.getenv("TIMEZONE", "America/New_York"),
+        "db_path": os.getenv("DB_PATH", "promo_engine.db"),
+    }
