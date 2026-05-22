@@ -44,6 +44,36 @@ def _post_once(api_key: str, payload: dict):
         return None
 
 
+def _extract_linkedin_urn(data: dict) -> str | None:
+    """Find the LinkedIn post URN in a Publora create-post response."""
+    for key in ("linkedinUrn", "postUrn", "platformPostId", "linkedinPostId", "urn"):
+        if val := data.get(key):
+            return val
+    for key in ("post", "linkedin", "platform", "data"):
+        nested = data.get(key)
+        if isinstance(nested, dict):
+            for subkey in ("urn", "postUrn", "linkedinUrn", "id", "platformPostId"):
+                if val := nested.get(subkey):
+                    return val
+    return None
+
+
+def _post_linkedin_comment(api_key: str, account_id: str, posted_id: str, url: str) -> bool:
+    """Post the article URL as the first comment. Returns True on success."""
+    endpoint = f"{PUBLORA_BASE_URL}/linkedin-comments"
+    payload = {"postedId": posted_id, "message": url, "platformId": account_id}
+    try:
+        resp = requests.post(endpoint, json=payload, headers=_headers(api_key), timeout=15)
+    except requests.RequestException as exc:
+        print(f"WARNING: LinkedIn comment network failure: {exc}", file=sys.stderr)
+        return False
+    if resp.status_code == 201:
+        print("Posted LinkedIn link comment.")
+        return True
+    print(f"WARNING: LinkedIn comment failed ({resp.status_code}): {resp.text}", file=sys.stderr)
+    return False
+
+
 def _remind_linkedin_comment(title: str, url: str) -> None:
     """Create an Apple Reminders entry to add the link as the first comment."""
     due = datetime.now(timezone.utc) + timedelta(minutes=30)
@@ -116,6 +146,13 @@ def run_publora(
         print(f"Posted {platform} (Publora ID: {publora_id})")
 
         if platform == "linkedin" and content_url:
-            _remind_linkedin_comment(content_title or "today's post", content_url)
+            linkedin_urn = _extract_linkedin_urn(data)
+            if linkedin_urn:
+                time.sleep(3)  # brief pause to let LinkedIn index the post
+                posted = _post_linkedin_comment(api_key, account_id, linkedin_urn, content_url)
+            else:
+                posted = False
+            if not posted:
+                _remind_linkedin_comment(content_title or "today's post", content_url)
 
     return result
