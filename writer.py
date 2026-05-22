@@ -22,13 +22,12 @@ Write a LinkedIn post promoting this piece of content.
 
 Content title: {title}
 Source: {source}
-URL: {url}
 Description: {description}
 
 Requirements:
 - One short paragraph. 40–60 words. That's it.
 - First person, direct and conversational
-- Hook, what it's about, link. No structure beyond that.
+- Hook and what it's about. No link — it will be posted as the first comment.
 - End with 3–5 relevant keyword hashtags drawn from the content's topic
 - Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
 - No em-dash abuse. No "In today's world" opener. No "I'm excited to share." Don't be clever.
@@ -95,7 +94,6 @@ def write_posts(content: dict, config: dict) -> dict:
     linkedin_prompt = LINKEDIN_PROMPT_TEMPLATE.format(
         title=content["title"],
         source=content["source"],
-        url=content["url"],
         description=description,
     )
     linkedin_post = call_claude(linkedin_prompt)

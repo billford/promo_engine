@@ -10,7 +10,6 @@ CLAUDE_MODEL = "claude-opus-4-7"
 MEDIUM_RSS_URL = "https://medium.com/feed/@billfordx"
 YOUTUBE_CHANNEL_HANDLE = "@billfordx"
 PUBLORA_BASE_URL = "https://api.publora.com/api/v1"
-POST_HOUR = 9
 COOLDOWN_DAYS = 30
 
 

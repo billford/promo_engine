@@ -1,11 +1,11 @@
+import subprocess
 import sys
 import time
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 import requests
 
-from config import PUBLORA_BASE_URL, POST_HOUR
+from config import PUBLORA_BASE_URL
 
 
 def _headers(api_key: str) -> dict:
@@ -30,44 +30,46 @@ def _get_accounts(api_key: str) -> dict[str, str]:
         platform_id = conn.get("platformId") or ""
         if not platform_id:
             continue
-        # Match by platformId prefix, e.g. "linkedin-n2c6artUXk" -> "linkedin"
         platform_name = platform_id.split("-")[0].lower()
         accounts[platform_name] = platform_id
 
     return accounts
 
 
-def _scheduled_time_utc(local_tz: str) -> str:
-    tz = ZoneInfo(local_tz)
-    now = datetime.now(tz)
-    target = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
-    if target <= now:
-        from datetime import timedelta
-        target += timedelta(days=1)
-    utc_dt = target.astimezone(timezone.utc)
-    return utc_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-
-def _post_once(api_key: str, payload: dict) -> dict:
+def _post_once(api_key: str, payload: dict):
     url = f"{PUBLORA_BASE_URL}/create-post"
     try:
-        resp = requests.post(url, json=payload, headers=_headers(api_key), timeout=15)
-        return resp
+        return requests.post(url, json=payload, headers=_headers(api_key), timeout=15)
     except requests.RequestException:
         return None
 
 
-def schedule_post(
-    api_key: str,
-    account_id: str,
-    post_text: str,
-    scheduled_time: str,
-) -> str:
-    """Submit one post to Publora. Returns the Publora post ID."""
+def _remind_linkedin_comment(title: str, url: str) -> None:
+    """Create an Apple Reminders entry to add the link as the first comment."""
+    due = datetime.now(timezone.utc) + timedelta(minutes=30)
+    due_str = due.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+    safe_url = url.replace("\\", "\\\\").replace('"', '\\"')
+
+    script = f"""
+tell application "Reminders"
+    set newReminder to make new reminder with properties {{¬
+        name:"LinkedIn: add link as first comment — {safe_title}", ¬
+        body:"{safe_url}", ¬
+        due date:date "{due_str}"}}
+end tell
+"""
+    try:
+        subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"WARNING: Could not create Reminders entry: {exc.stderr.decode().strip()}", file=sys.stderr)
+
+
+def schedule_post(api_key: str, account_id: str, post_text: str) -> dict:
+    """Submit one post to Publora immediately. Returns full response data."""
     payload = {
         "content": post_text,
         "platforms": [account_id],
-        "scheduledTime": scheduled_time,
     }
 
     resp = _post_once(api_key, payload)
@@ -85,19 +87,19 @@ def schedule_post(
         print(f"ERROR: Publora /create-post returned {resp.status_code}:\n{resp.text}", file=sys.stderr)
         sys.exit(1)
 
-    data = resp.json()
-    return data.get("postGroupId") or ""
+    return resp.json()
 
 
 def run_publora(
     posts: dict,
     config: dict,
     platforms: list[str],
+    content_url: str | None = None,
+    content_title: str | None = None,
 ) -> dict[str, str]:
-    """Schedule posts for requested platforms. Returns {platform: publora_post_id}."""
+    """Post immediately for requested platforms. Returns {platform: publora_post_id}."""
     api_key = config["publora_api_key"]
     accounts = _get_accounts(api_key)
-    scheduled_time = _scheduled_time_utc(config["timezone"])
     result = {}
 
     for platform in platforms:
@@ -108,8 +110,12 @@ def run_publora(
             sys.exit(1)
 
         post_text = posts[platform]
-        publora_id = schedule_post(api_key, account_id, post_text, scheduled_time)
+        data = schedule_post(api_key, account_id, post_text)
+        publora_id = data.get("postGroupId") or ""
         result[platform] = publora_id
-        print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}")
+        print(f"Posted {platform} (Publora ID: {publora_id})")
+
+        if platform == "linkedin" and content_url:
+            _remind_linkedin_comment(content_title or "today's post", content_url)
 
     return result

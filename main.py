@@ -61,10 +61,6 @@ def main():
 
         # Step 5: schedule or dry-run
         if args.dry_run:
-            from publora import _scheduled_time_utc
-            scheduled_time = _scheduled_time_utc(config["timezone"])
-            print(f"\nWould schedule for: {scheduled_time}")
-
             for platform in platforms:
                 insert_post_record(
                     conn,
@@ -78,7 +74,7 @@ def main():
             return
 
         from publora import run_publora
-        publora_ids = run_publora(posts, config, platforms)
+        publora_ids = run_publora(posts, config, platforms, content_url=selected["url"], content_title=selected["title"])
 
         # Step 6: record to DB
         for platform in platforms:
