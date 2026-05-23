@@ -117,7 +117,9 @@ def schedule_post(api_key: str, account_id: str, post_text: str) -> dict:
         print(f"ERROR: Publora /create-post returned {resp.status_code}:\n{resp.text}", file=sys.stderr)
         sys.exit(1)
 
-    return resp.json()
+    data = resp.json()
+    print(f"DEBUG Publora create-post response: {data}", file=sys.stderr)
+    return data
 
 
 def run_publora(
