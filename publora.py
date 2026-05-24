@@ -1,7 +1,6 @@
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -74,25 +73,19 @@ def _post_linkedin_comment(api_key: str, account_id: str, posted_id: str, url: s
     return False
 
 
-def _remind_linkedin_comment(title: str, url: str) -> None:
-    """Create an Apple Reminders entry to add the link as the first comment."""
-    due = datetime.now(timezone.utc) + timedelta(minutes=30)
-    due_str = due.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+def _notify_linkedin_comment(title: str, url: str) -> None:
+    """Send a macOS notification to add the link as the first comment."""
     safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
     safe_url = url.replace("\\", "\\\\").replace('"', '\\"')
-
-    script = f"""
-tell application "Reminders"
-    set newReminder to make new reminder with properties {{¬
-        name:"LinkedIn: add link as first comment — {safe_title}", ¬
-        body:"{safe_url}", ¬
-        due date:date "{due_str}"}}
-end tell
-"""
+    script = (
+        f'display notification "{safe_url}" '
+        f'with title "LinkedIn: paste as first comment" '
+        f'subtitle "{safe_title}"'
+    )
     try:
         subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
     except subprocess.CalledProcessError as exc:
-        print(f"WARNING: Could not create Reminders entry: {exc.stderr.decode().strip()}", file=sys.stderr)
+        print(f"WARNING: macOS notification failed: {exc.stderr.decode().strip()}", file=sys.stderr)
 
 
 def schedule_post(api_key: str, account_id: str, post_text: str) -> dict:
@@ -155,6 +148,6 @@ def run_publora(
             else:
                 posted = False
             if not posted:
-                _remind_linkedin_comment(content_title or "today's post", content_url)
+                _notify_linkedin_comment(content_title or "today's post", content_url)
 
     return result
