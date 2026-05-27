@@ -1,10 +1,21 @@
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import requests
 
-from config import PUBLORA_BASE_URL
+from config import POST_HOUR, PUBLORA_BASE_URL
+
+
+def _scheduled_time_utc(local_tz: str) -> str:
+    tz = ZoneInfo(local_tz)
+    now = datetime.now(tz)
+    target = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _headers(api_key: str) -> dict:
@@ -88,11 +99,12 @@ def _notify_linkedin_comment(title: str, url: str) -> None:
         print(f"WARNING: macOS notification failed: {exc.stderr.decode().strip()}", file=sys.stderr)
 
 
-def schedule_post(api_key: str, account_id: str, post_text: str) -> dict:
-    """Submit one post to Publora immediately. Returns full response data."""
+def schedule_post(api_key: str, account_id: str, post_text: str, scheduled_time: str) -> dict:
+    """Submit one post to Publora scheduled for scheduled_time. Returns full response data."""
     payload = {
         "content": post_text,
         "platforms": [account_id],
+        "scheduledTime": scheduled_time,
     }
 
     resp = _post_once(api_key, payload)
@@ -123,6 +135,7 @@ def run_publora(
     """Post immediately for requested platforms. Returns {platform: publora_post_id}."""
     api_key = config["publora_api_key"]
     accounts = _get_accounts(api_key)
+    scheduled_time = _scheduled_time_utc(config["timezone"])
     result = {}
 
     for platform in platforms:
@@ -133,10 +146,10 @@ def run_publora(
             sys.exit(1)
 
         post_text = posts[platform]
-        data = schedule_post(api_key, account_id, post_text)
+        data = schedule_post(api_key, account_id, post_text, scheduled_time)
         publora_id = data.get("postGroupId") or ""
         result[platform] = publora_id
-        print(f"Posted {platform} (Publora ID: {publora_id})")
+        print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}")
 
         if platform == "linkedin" and content_url:
             linkedin_urn = _extract_linkedin_urn(data)

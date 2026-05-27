@@ -11,6 +11,7 @@ MEDIUM_RSS_URL = "https://medium.com/feed/@billfordx"
 YOUTUBE_CHANNEL_HANDLE = "@billfordx"
 PUBLORA_BASE_URL = "https://api.publora.com/api/v1"
 COOLDOWN_DAYS = 30
+POST_HOUR = 9
 
 
 def load_config() -> dict:
