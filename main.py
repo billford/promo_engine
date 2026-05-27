@@ -32,14 +32,19 @@ def main():
 
     with get_conn(db_path) as conn:
 
-        # Step 2: refresh catalog
+        # Step 2: process pending LinkedIn first comments from yesterday's scheduled post
+        if not args.dry_run:
+            from publora import process_pending_comments
+            process_pending_comments(conn, config)
+
+        # Step 3: refresh catalog
         if not args.skip_collect:
             from collector import run_collector
             run_collector(conn, config)
         else:
             print("Skipping catalog refresh (--skip-collect).")
 
-        # Step 3: pick today's winner
+        # Step 4: pick today's winner
         from scorer import pick_content
         selected = pick_content(conn, config, platforms)
 
@@ -47,7 +52,7 @@ def main():
         if args.verbose:
             print(f"Rationale: {selected['rationale']}")
 
-        # Step 4: write platform posts
+        # Step 5: write platform posts
         from writer import write_posts
         posts = write_posts(selected, config)
 
@@ -59,7 +64,7 @@ def main():
                 print(f"\n--- {p.upper()} ---")
                 print(posts[p])
 
-        # Step 5: schedule or dry-run
+        # Step 6: schedule or dry-run
         if args.dry_run:
             for platform in platforms:
                 insert_post_record(
@@ -74,9 +79,14 @@ def main():
             return
 
         from publora import run_publora
-        publora_ids = run_publora(posts, config, platforms, content_url=selected["url"], content_title=selected["title"])
+        publora_ids = run_publora(
+            posts, config, platforms,
+            conn=conn,
+            content_url=selected["url"],
+            content_title=selected["title"],
+        )
 
-        # Step 6: record to DB
+        # Step 7: record to DB
         for platform in platforms:
             insert_post_record(
                 conn,

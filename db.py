@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS post_history (
     dry_run INTEGER DEFAULT 0,
     FOREIGN KEY (content_id) REFERENCES content(id)
 );
+
+CREATE TABLE IF NOT EXISTS pending_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    publora_post_id TEXT NOT NULL,
+    platform_account_id TEXT NOT NULL,
+    content_url TEXT NOT NULL,
+    content_title TEXT,
+    fires_at TEXT NOT NULL,
+    done INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -145,6 +156,36 @@ def get_recently_selected_ids(conn: sqlite3.Connection, days: int = 7) -> set[st
         (f"-{days}",),
     ).fetchall()
     return {r["content_id"] for r in rows}
+
+
+def insert_pending_comment(
+    conn: sqlite3.Connection,
+    publora_post_id: str,
+    platform_account_id: str,
+    content_url: str,
+    content_title: str | None,
+    fires_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO pending_comments
+            (publora_post_id, platform_account_id, content_url, content_title, fires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (publora_post_id, platform_account_id, content_url, content_title, fires_at,
+         datetime.now(timezone.utc).isoformat()),
+    )
+
+
+def get_due_pending_comments(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM pending_comments WHERE done = 0 AND fires_at <= datetime('now')"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_comment_done(conn: sqlite3.Connection, comment_id: int) -> None:
+    conn.execute("UPDATE pending_comments SET done = 1 WHERE id = ?", (comment_id,))
 
 
 def insert_post_record(
