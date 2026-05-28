@@ -9,13 +9,27 @@ import requests
 from config import POST_HOUR, PUBLORA_BASE_URL
 
 
-def _scheduled_time_utc(local_tz: str) -> str:
+def _next_scheduled_time(conn, platform: str, local_tz: str) -> str:
+    """Return the next unoccupied 9 AM slot for the given platform as a UTC ISO string."""
+    from db import get_latest_scheduled_for
     tz = ZoneInfo(local_tz)
     now = datetime.now(tz)
-    target = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    return target.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    latest = get_latest_scheduled_for(conn, platform)
+    if latest:
+        latest_dt = datetime.fromisoformat(latest).astimezone(tz)
+        candidate = (latest_dt + timedelta(days=1)).replace(
+            hour=POST_HOUR, minute=0, second=0, microsecond=0
+        )
+        # Don't schedule in the past if the queue has fallen behind
+        if candidate <= now:
+            candidate = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
+            if candidate <= now:
+                candidate += timedelta(days=1)
+    else:
+        candidate = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+    return candidate.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _headers(api_key: str) -> dict:
@@ -180,8 +194,8 @@ def run_publora(
     from db import insert_pending_comment
     api_key = config["publora_api_key"]
     accounts = _get_accounts(api_key)
-    scheduled_time = _scheduled_time_utc(config["timezone"])
     result = {}
+    scheduled_times = {}
 
     for platform in platforms:
         account_id = accounts.get(platform)
@@ -190,14 +204,17 @@ def run_publora(
             print(f"       Connected accounts: {list(accounts.keys())}", file=sys.stderr)
             sys.exit(1)
 
+        scheduled_time = _next_scheduled_time(conn, platform, config["timezone"])
         post_text = posts[platform]
         data = schedule_post(api_key, account_id, post_text, scheduled_time)
         publora_id = data.get("postGroupId") or ""
         result[platform] = publora_id
+        scheduled_times[platform] = scheduled_time
         print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}")
 
         if platform == "linkedin" and content_url and conn is not None and publora_id:
             insert_pending_comment(conn, publora_id, account_id, content_url, content_title, scheduled_time)
             print("Queued LinkedIn first comment for after post goes live.")
 
+    result["_scheduled_times"] = scheduled_times
     return result

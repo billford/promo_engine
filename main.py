@@ -87,6 +87,7 @@ def main():
         )
 
         # Step 7: record to DB
+        scheduled_times = publora_ids.pop("_scheduled_times", {})
         for platform in platforms:
             insert_post_record(
                 conn,
@@ -94,6 +95,7 @@ def main():
                 platform=platform,
                 post_text=posts[platform],
                 publora_post_id=publora_ids.get(platform),
+                scheduled_for=scheduled_times.get(platform),
                 dry_run=False,
             )
 

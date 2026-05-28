@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS post_history (
     posted_at TEXT,
     post_text TEXT,
     publora_post_id TEXT,
+    scheduled_for TEXT,
     dry_run INTEGER DEFAULT 0,
     FOREIGN KEY (content_id) REFERENCES content(id)
 );
@@ -54,6 +55,10 @@ def get_conn(db_path: str):
 def init_db(db_path: str) -> None:
     with get_conn(db_path) as conn:
         conn.executescript(SCHEMA)
+        try:
+            conn.execute("ALTER TABLE post_history ADD COLUMN scheduled_for TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
@@ -158,6 +163,18 @@ def get_recently_selected_ids(conn: sqlite3.Connection, days: int = 7) -> set[st
     return {r["content_id"] for r in rows}
 
 
+def get_latest_scheduled_for(conn: sqlite3.Connection, platform: str) -> str | None:
+    """Return the latest scheduled_for timestamp for the given platform (non-dry-run only)."""
+    row = conn.execute(
+        """
+        SELECT MAX(scheduled_for) AS latest FROM post_history
+        WHERE platform = ? AND dry_run = 0 AND scheduled_for IS NOT NULL
+        """,
+        (platform,),
+    ).fetchone()
+    return row["latest"] if row else None
+
+
 def insert_pending_comment(
     conn: sqlite3.Connection,
     publora_post_id: str,
@@ -194,12 +211,14 @@ def insert_post_record(
     platform: str,
     post_text: str,
     publora_post_id: str | None = None,
+    scheduled_for: str | None = None,
     dry_run: bool = False,
 ) -> None:
     conn.execute(
         """
-        INSERT INTO post_history (content_id, platform, posted_at, post_text, publora_post_id, dry_run)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO post_history
+            (content_id, platform, posted_at, post_text, publora_post_id, scheduled_for, dry_run)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             content_id,
@@ -207,6 +226,7 @@ def insert_post_record(
             datetime.now(timezone.utc).isoformat(),
             post_text,
             publora_post_id,
+            scheduled_for,
             1 if dry_run else 0,
         ),
     )
