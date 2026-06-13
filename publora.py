@@ -68,57 +68,7 @@ def _post_once(api_key: str, payload: dict):
         return None
 
 
-def _extract_linkedin_urn(data: dict) -> str | None:
-    """Find the LinkedIn post URN anywhere in a Publora API response dict."""
-    for key in ("linkedinUrn", "postUrn", "platformPostId", "linkedinPostId", "urn"):
-        if val := data.get(key):
-            return val
-    for key in ("post", "linkedin", "platform", "data", "posts"):
-        nested = data.get(key)
-        if isinstance(nested, dict):
-            for subkey in ("urn", "postUrn", "linkedinUrn", "id", "platformPostId"):
-                if val := nested.get(subkey):
-                    return val
-        if isinstance(nested, list):
-            for item in nested:
-                if isinstance(item, dict):
-                    for subkey in ("urn", "postUrn", "linkedinUrn", "id", "platformPostId"):
-                        if val := item.get(subkey):
-                            return val
-    return None
 
-
-def _get_post_urn(api_key: str, publora_post_id: str) -> str | None:
-    """Query Publora for a published post's LinkedIn URN. Returns None on any failure."""
-    for endpoint in (
-        f"{PUBLORA_BASE_URL}/posts/{publora_post_id}",
-        f"{PUBLORA_BASE_URL}/post-groups/{publora_post_id}",
-    ):
-        try:
-            resp = requests.get(endpoint, headers=_headers(api_key), timeout=15)
-        except requests.RequestException:
-            continue
-        if resp.status_code == 200:
-            urn = _extract_linkedin_urn(resp.json())
-            if urn:
-                return urn
-    return None
-
-
-def _post_linkedin_comment(api_key: str, account_id: str, posted_id: str, url: str) -> bool:
-    """Post the article URL as the first comment. Returns True on success."""
-    endpoint = f"{PUBLORA_BASE_URL}/linkedin-comments"
-    payload = {"postedId": posted_id, "message": url, "platformId": account_id}
-    try:
-        resp = requests.post(endpoint, json=payload, headers=_headers(api_key), timeout=15)
-    except requests.RequestException as exc:
-        print(f"WARNING: LinkedIn comment network failure: {exc}", file=sys.stderr)
-        return False
-    if resp.status_code == 201:
-        print("Posted LinkedIn link comment.")
-        return True
-    print(f"WARNING: LinkedIn comment failed ({resp.status_code}): {resp.text}", file=sys.stderr)
-    return False
 
 
 def _notify_linkedin_comment(title: str, url: str) -> None:
@@ -137,32 +87,25 @@ def _notify_linkedin_comment(title: str, url: str) -> None:
 
 
 def process_pending_comments(conn, config: dict) -> None:
-    """For any pending LinkedIn comments whose post is now live, post the comment."""
+    """Notify about any backlogged LinkedIn first comments that couldn't be automated."""
     from db import get_due_pending_comments, mark_comment_done
-    api_key = config["publora_api_key"]
     due = get_due_pending_comments(conn)
     for row in due:
-        urn = _get_post_urn(api_key, row["publora_post_id"])
-        if urn:
-            posted = _post_linkedin_comment(api_key, row["platform_account_id"], urn, row["content_url"])
-        else:
-            posted = False
-        if not posted:
-            print(
-                f"WARNING: could not post LinkedIn comment for {row['publora_post_id']} — sending notification",
-                file=sys.stderr,
-            )
-            _notify_linkedin_comment(row["content_title"] or "today's post", row["content_url"])
+        _notify_linkedin_comment(row["content_title"] or "today's post", row["content_url"])
         mark_comment_done(conn, row["id"])
 
 
-def schedule_post(api_key: str, account_id: str, post_text: str, scheduled_time: str) -> dict:
+def schedule_post(
+    api_key: str, account_id: str, post_text: str, scheduled_time: str, first_comment: str | None = None
+) -> dict:
     """Submit one post to Publora scheduled for scheduled_time. Returns full response data."""
     payload = {
         "content": post_text,
         "platforms": [account_id],
         "scheduledTime": scheduled_time,
     }
+    if first_comment:
+        payload["firstComment"] = first_comment
 
     resp = _post_once(api_key, payload)
 
@@ -191,7 +134,6 @@ def run_publora(
     content_title: str | None = None,
 ) -> dict[str, str]:
     """Schedule posts via Publora. Returns {platform: publora_post_id}."""
-    from db import insert_pending_comment
     api_key = config["publora_api_key"]
     accounts = _get_accounts(api_key)
     result = {}
@@ -206,15 +148,13 @@ def run_publora(
 
         scheduled_time = _next_scheduled_time(conn, platform, config["timezone"])
         post_text = posts[platform]
-        data = schedule_post(api_key, account_id, post_text, scheduled_time)
+        first_comment = content_url if platform == "linkedin" else None
+        data = schedule_post(api_key, account_id, post_text, scheduled_time, first_comment=first_comment)
         publora_id = data.get("postGroupId") or ""
         result[platform] = publora_id
         scheduled_times[platform] = scheduled_time
-        print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}")
-
-        if platform == "linkedin" and content_url and conn is not None and publora_id:
-            insert_pending_comment(conn, publora_id, account_id, content_url, content_title, scheduled_time)
-            print("Queued LinkedIn first comment for after post goes live.")
+        extra = " (first comment queued)" if first_comment else ""
+        print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}{extra}")
 
     result["_scheduled_times"] = scheduled_times
     return result
