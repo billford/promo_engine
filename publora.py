@@ -20,7 +20,6 @@ def _next_scheduled_time(conn, platform: str, local_tz: str) -> str:
         candidate = (latest_dt + timedelta(days=1)).replace(
             hour=POST_HOUR, minute=0, second=0, microsecond=0
         )
-        # Don't schedule in the past if the queue has fallen behind
         if candidate <= now:
             candidate = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
             if candidate <= now:
@@ -68,7 +67,44 @@ def _post_once(api_key: str, payload: dict):
         return None
 
 
+def _get_linkedin_urn(api_key: str, publora_post_id: str) -> str | None:
+    """Fetch the LinkedIn URN for a published post via Publora's get-post endpoint."""
+    try:
+        resp = requests.get(
+            f"{PUBLORA_BASE_URL}/get-post/{publora_post_id}",
+            headers=_headers(api_key),
+            timeout=15,
+        )
+    except requests.RequestException:
+        return None
+    if resp.status_code != 200:
+        return None
+    posts = resp.json().get("posts", [])
+    for post in posts:
+        if post.get("status") == "published":
+            urn = post.get("postedId")
+            if urn:
+                return urn
+    return None
 
+
+def _post_linkedin_comment(api_key: str, account_id: str, linkedin_urn: str, url: str) -> bool:
+    """Post the article URL as the first comment on a LinkedIn post."""
+    try:
+        resp = requests.post(
+            f"{PUBLORA_BASE_URL}/linkedin-comments",
+            json={"postedId": linkedin_urn, "message": url, "platformId": account_id},
+            headers=_headers(api_key),
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        print(f"WARNING: LinkedIn comment network failure: {exc}", file=sys.stderr)
+        return False
+    if resp.status_code == 201:
+        print("Posted LinkedIn link comment.")
+        return True
+    print(f"WARNING: LinkedIn comment failed ({resp.status_code}): {resp.text}", file=sys.stderr)
+    return False
 
 
 def _notify_linkedin_comment(title: str, url: str) -> None:
@@ -87,25 +123,29 @@ def _notify_linkedin_comment(title: str, url: str) -> None:
 
 
 def process_pending_comments(conn, config: dict) -> None:
-    """Notify about any backlogged LinkedIn first comments that couldn't be automated."""
+    """Post first comments for any LinkedIn posts that have gone live since last run."""
     from db import get_due_pending_comments, mark_comment_done
+    api_key = config["publora_api_key"]
     due = get_due_pending_comments(conn)
     for row in due:
-        _notify_linkedin_comment(row["content_title"] or "today's post", row["content_url"])
+        urn = _get_linkedin_urn(api_key, row["publora_post_id"])
+        if urn:
+            posted = _post_linkedin_comment(api_key, row["platform_account_id"], urn, row["content_url"])
+        else:
+            posted = False
+        if not posted:
+            print(f"WARNING: could not post LinkedIn comment for {row['content_title']} — sending notification", file=sys.stderr)
+            _notify_linkedin_comment(row["content_title"] or "today's post", row["content_url"])
         mark_comment_done(conn, row["id"])
 
 
-def schedule_post(
-    api_key: str, account_id: str, post_text: str, scheduled_time: str, first_comment: str | None = None
-) -> dict:
+def schedule_post(api_key: str, account_id: str, post_text: str, scheduled_time: str) -> dict:
     """Submit one post to Publora scheduled for scheduled_time. Returns full response data."""
     payload = {
         "content": post_text,
         "platforms": [account_id],
         "scheduledTime": scheduled_time,
     }
-    if first_comment:
-        payload["firstComment"] = first_comment
 
     resp = _post_once(api_key, payload)
 
@@ -134,6 +174,7 @@ def run_publora(
     content_title: str | None = None,
 ) -> dict[str, str]:
     """Schedule posts via Publora. Returns {platform: publora_post_id}."""
+    from db import insert_pending_comment
     api_key = config["publora_api_key"]
     accounts = _get_accounts(api_key)
     result = {}
@@ -148,13 +189,15 @@ def run_publora(
 
         scheduled_time = _next_scheduled_time(conn, platform, config["timezone"])
         post_text = posts[platform]
-        first_comment = content_url if platform == "linkedin" else None
-        data = schedule_post(api_key, account_id, post_text, scheduled_time, first_comment=first_comment)
+        data = schedule_post(api_key, account_id, post_text, scheduled_time)
         publora_id = data.get("postGroupId") or ""
         result[platform] = publora_id
         scheduled_times[platform] = scheduled_time
-        extra = " (first comment queued)" if first_comment else ""
-        print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}{extra}")
+        print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}")
+
+        if platform == "linkedin" and content_url and conn is not None and publora_id:
+            insert_pending_comment(conn, publora_id, account_id, content_url, content_title, scheduled_time)
+            print("Queued LinkedIn first comment for after post goes live.")
 
     result["_scheduled_times"] = scheduled_times
     return result
