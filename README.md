@@ -102,15 +102,108 @@ Prints the selected content, rationale, and both post drafts. Logs to DB with `d
 
 ---
 
-## Cron setup
+## Cron / scheduler setup
 
-Run daily at 9 AM local time:
+Two jobs are required: one to run the daily engine, and one to post the LinkedIn first comment shortly after posts go live.
 
-```cron
-0 9 * * * /path/to/promo_engine/run.sh >> /var/log/promo_engine.log 2>&1
+### Option A — macOS launchd (recommended)
+
+**Daily engine** (`~/Library/LaunchAgents/local.promo-engine.daily.plist`):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.promo-engine.daily</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/promo_engine/.venv/bin/python3</string>
+        <string>/path/to/promo_engine/main.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/promo_engine</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/promo_engine/promo_engine.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/path/to/promo_engine/promo_engine.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
 ```
 
-The engine schedules Publora posts for 9 AM in the configured timezone. If the cron fires at 9 AM and Publora's scheduled time is also 9 AM, the post will be queued immediately. Adjust `POST_HOUR` in `config.py` if you want the schedule offset from the cron fire time.
+**First-comment poster** (`~/Library/LaunchAgents/local.promo-engine.comments.plist`) — runs 5 minutes after posts go live:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.promo-engine.comments</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/promo_engine/.venv/bin/python3</string>
+        <string>/path/to/promo_engine/post_comments.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/path/to/promo_engine</string>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/path/to/promo_engine/promo_engine.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/path/to/promo_engine/promo_engine.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
+```
+
+Load both jobs:
+
+```bash
+launchctl load ~/Library/LaunchAgents/local.promo-engine.daily.plist
+launchctl load ~/Library/LaunchAgents/local.promo-engine.comments.plist
+```
+
+### Option B — cron
+
+```cron
+# Daily engine at 9:00 AM
+0 9 * * * cd /path/to/promo_engine && .venv/bin/python3 main.py >> promo_engine.log 2>&1
+
+# First-comment poster at 9:05 AM
+5 9 * * * cd /path/to/promo_engine && .venv/bin/python3 post_comments.py >> promo_engine.log 2>&1
+```
+
+The 5-minute gap gives Publora time to publish the scheduled post before the comment script polls for the LinkedIn URN. If a comment still fails (Publora outage, etc.), `process_pending_comments` will retry on the next daily run and fall back to a macOS notification after 48 hours.
 
 ---
 
@@ -135,6 +228,7 @@ The engine schedules Publora posts for 9 AM in the configured timezone. If the c
 ```
 promo_engine/
 ├── main.py                        # Entry point / orchestrator
+├── post_comments.py               # Standalone: post LinkedIn first comments
 ├── collector.py                   # Fetches Medium RSS + YouTube catalog
 ├── scorer.py                      # Claude API: picks today's winner
 ├── writer.py                      # Claude API: writes platform posts
