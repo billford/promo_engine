@@ -196,7 +196,7 @@ def insert_pending_comment(
 
 def get_due_pending_comments(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        "SELECT * FROM pending_comments WHERE done = 0 AND fires_at <= datetime('now')"
+        "SELECT * FROM pending_comments WHERE done = 0 AND datetime(fires_at) <= datetime('now')"
     ).fetchall()
     return [dict(r) for r in rows]
 

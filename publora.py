@@ -131,12 +131,13 @@ def process_pending_comments(conn, config: dict) -> None:
         urn = _get_linkedin_urn(api_key, row["publora_post_id"])
         if urn:
             posted = _post_linkedin_comment(api_key, row["platform_account_id"], urn, row["content_url"])
+            if posted:
+                mark_comment_done(conn, row["id"])
+            else:
+                print(f"WARNING: LinkedIn comment API failed for {row['content_title']} — will retry next run", file=sys.stderr)
         else:
-            posted = False
-        if not posted:
-            print(f"WARNING: could not post LinkedIn comment for {row['content_title']} — sending notification", file=sys.stderr)
-            _notify_linkedin_comment(row["content_title"] or "today's post", row["content_url"])
-        mark_comment_done(conn, row["id"])
+            # Post not live yet — leave done=0 so it retries next run
+            print(f"Post not live yet for {row['content_title']} — will retry next run")
 
 
 def schedule_post(api_key: str, account_id: str, post_text: str, scheduled_time: str) -> dict:
