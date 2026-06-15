@@ -128,16 +128,28 @@ def process_pending_comments(conn, config: dict) -> None:
     api_key = config["publora_api_key"]
     due = get_due_pending_comments(conn)
     for row in due:
+        fires_at_dt = datetime.fromisoformat(row["fires_at"].replace("Z", "+00:00"))
+        age_hours = (datetime.now(timezone.utc) - fires_at_dt).total_seconds() / 3600
+
+        if age_hours > 48:
+            # Post never published or Publora marked it failed — stop retrying
+            print(f"WARNING: giving up on first comment for '{row['content_title']}' (>48h) — sending notification", file=sys.stderr)
+            _notify_linkedin_comment(row["content_title"] or "a recent post", row["content_url"])
+            mark_comment_done(conn, row["id"])
+            conn.commit()
+            continue
+
         urn = _get_linkedin_urn(api_key, row["publora_post_id"])
         if urn:
             posted = _post_linkedin_comment(api_key, row["platform_account_id"], urn, row["content_url"])
             if posted:
                 mark_comment_done(conn, row["id"])
+                conn.commit()
             else:
-                print(f"WARNING: LinkedIn comment API failed for {row['content_title']} — will retry next run", file=sys.stderr)
+                print(f"WARNING: LinkedIn comment API failed for '{row['content_title']}' — will retry next run", file=sys.stderr)
+                _notify_linkedin_comment(row["content_title"] or "a recent post", row["content_url"])
         else:
-            # Post not live yet — leave done=0 so it retries next run
-            print(f"Post not live yet for {row['content_title']} — will retry next run")
+            print(f"Post not yet live for '{row['content_title']}' — will retry next run")
 
 
 def schedule_post(api_key: str, account_id: str, post_text: str, scheduled_time: str) -> dict:
@@ -191,7 +203,7 @@ def run_publora(
         scheduled_time = _next_scheduled_time(conn, platform, config["timezone"])
         post_text = posts[platform]
         data = schedule_post(api_key, account_id, post_text, scheduled_time)
-        publora_id = data.get("postGroupId") or ""
+        publora_id = data.get("postGroupId") or None
         result[platform] = publora_id
         scheduled_times[platform] = scheduled_time
         print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}")
