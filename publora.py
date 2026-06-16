@@ -9,7 +9,36 @@ import requests
 from config import POST_HOUR, PUBLORA_BASE_URL
 
 
-def _next_scheduled_time(conn, platform: str, local_tz: str) -> str:
+def _get_scheduled_times(api_key: str, platform: str) -> set[str]:
+    """Return the set of scheduledTime strings Publora already has queued for this platform."""
+    times = set()
+    page = 1
+    while True:
+        try:
+            resp = requests.get(
+                f"{PUBLORA_BASE_URL}/list-posts",
+                headers=_headers(api_key),
+                params={"status": "scheduled", "platform": platform, "page": page, "limit": 100},
+                timeout=15,
+            )
+        except requests.RequestException as exc:
+            print(f"WARNING: Publora /list-posts network failure: {exc} — skipping collision check", file=sys.stderr)
+            return times
+        if resp.status_code != 200:
+            print(f"WARNING: Publora /list-posts returned {resp.status_code} — skipping collision check", file=sys.stderr)
+            return times
+        data = resp.json()
+        for post in data.get("posts", []):
+            scheduled_time = post.get("scheduledTime")
+            if scheduled_time:
+                times.add(scheduled_time)
+        if not data.get("pagination", {}).get("hasNextPage"):
+            break
+        page += 1
+    return times
+
+
+def _next_scheduled_time(conn, platform: str, local_tz: str, api_key: str) -> str:
     """Return the next unoccupied 9 AM slot for the given platform as a UTC ISO string."""
     from db import get_latest_scheduled_for
     tz = ZoneInfo(local_tz)
@@ -28,7 +57,15 @@ def _next_scheduled_time(conn, platform: str, local_tz: str) -> str:
         candidate = now.replace(hour=POST_HOUR, minute=0, second=0, microsecond=0)
         if candidate <= now:
             candidate += timedelta(days=1)
-    return candidate.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    # Local db state can fall behind reality (e.g. manual re-runs) — confirm against
+    # what Publora actually has scheduled so we never double-book a slot.
+    occupied = _get_scheduled_times(api_key, platform)
+    candidate_str = candidate.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    while candidate_str in occupied:
+        candidate += timedelta(days=1)
+        candidate_str = candidate.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return candidate_str
 
 
 def _headers(api_key: str) -> dict:
@@ -200,7 +237,7 @@ def run_publora(
             print(f"       Connected accounts: {list(accounts.keys())}", file=sys.stderr)
             sys.exit(1)
 
-        scheduled_time = _next_scheduled_time(conn, platform, config["timezone"])
+        scheduled_time = _next_scheduled_time(conn, platform, config["timezone"], api_key)
         post_text = posts[platform]
         data = schedule_post(api_key, account_id, post_text, scheduled_time)
         publora_id = data.get("postGroupId") or None
