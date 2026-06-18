@@ -1,4 +1,5 @@
 import json
+import re
 import sys
 import sqlite3
 from datetime import date
@@ -6,7 +7,12 @@ from datetime import date
 import anthropic
 
 from config import CLAUDE_MODEL, COOLDOWN_DAYS
-from db import get_eligible_content, get_oldest_content_by_platform, get_recent_post_history, get_recently_selected_ids
+from db import (
+    get_eligible_content,
+    get_oldest_content_by_platform,
+    get_recent_post_history,
+    get_recently_selected_ids,
+)
 
 
 LINKEDIN_EXCLUDE_PATTERNS = [
@@ -14,28 +20,34 @@ LINKEDIN_EXCLUDE_PATTERNS = [
     "cryptid", "bigfoot", "urban legend", "supernatural", "occult", "curse",
 ]
 
-SCORING_SYSTEM_PROMPT = """\
+_SCORING_SYSTEM_PROMPT_TEMPLATE = """\
 You are a content promotion strategist for a semi-retired cybersecurity professional and tech writer.
-The author publishes at medium.com/@billfordx. Topics appropriate for LinkedIn: AI skepticism,
-cybersecurity, technology, leadership, pop culture commentary, career, and general opinion pieces.
+The author publishes at medium.com/@billfordx.
 
-Your job: pick one piece of content from the catalog to promote today on LinkedIn.
+Your job: pick one piece of content from the catalog to promote today on {platform}.
+
+Content type preference: {content_type_pref}
+- business = professional, tech, AI, cybersecurity, career, leadership
+- personal = opinion, personal story, humor, pop culture, lifestyle
+
+Strongly prefer '{content_type_pref}' content. Fall back to unclassified or the other type only
+if no '{content_type_pref}' content is available.
 
 Scoring criteria (apply in order of weight):
-1. Evergreen value — prefer content that doesn't go stale over time-sensitive posts
-2. Professional relevance — AI/cybersecurity/tech/leadership/career topics perform best on LinkedIn
-3. YouTube boost — YouTube videos are underused on text-based platforms and get a scoring boost
-4. Variety — avoid the same topic category as recent posts (check recent history provided)
-5. Engagement hook — strong opinion, surprising claim, or provocative question in title/description
+1. Content type match — must match platform preference above
+2. Evergreen value — prefer content that doesn't go stale over time-sensitive posts
+3. Variety — avoid the same topic category as recent posts (check recent history provided)
+4. YouTube boost — YouTube videos are underused on text-based platforms and get a scoring boost
+5. Engagement hook — strong opinion, surprising claim, or clear specific insight
 
 Respond with JSON only, no preamble, no explanation outside the JSON:
-{
+{{
   "content_id": "<id>",
   "title": "<title>",
   "url": "<url>",
   "source": "<medium|youtube>",
   "rationale": "<one sentence>"
-}
+}}
 """
 
 
@@ -55,6 +67,7 @@ def _build_catalog_text(items: list[dict], recent_history: list[dict]) -> str:
         lines.append(
             f"\nID: {item['id']}\n"
             f"Source: {item['source']}\n"
+            f"Type: {item.get('content_type') or 'unclassified'}\n"
             f"Title: {item['title']}\n"
             f"URL: {item['url']}\n"
             f"Published: {item.get('published_date', 'unknown')[:10]}\n"
@@ -66,11 +79,7 @@ def _build_catalog_text(items: list[dict], recent_history: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def pick_content(conn: sqlite3.Connection, config: dict, platforms: list[str] | None = None) -> dict:
-    client = anthropic.Anthropic(api_key=config["anthropic_api_key"])
-    active_platforms = platforms or ["linkedin"]
-
-    # Content must be eligible on all active platforms
+def _resolve_eligible_items(conn: sqlite3.Connection, active_platforms: list[str]) -> list[dict]:
     eligible_sets = [
         {i["id"]: i for i in get_eligible_content(conn, p, COOLDOWN_DAYS)}
         for p in active_platforms
@@ -83,25 +92,35 @@ def pick_content(conn: sqlite3.Connection, config: dict, platforms: list[str] | 
     for s in eligible_sets[1:]:
         merged.update(s)
 
-    # Exclude anything selected in the last 7 days, dry run or not
     recently_selected = get_recently_selected_ids(conn, days=7)
-    eligible_items = [v for k, v in merged.items() if k in eligible_ids and k not in recently_selected]
+    items = [v for k, v in merged.items() if k in eligible_ids and k not in recently_selected]
 
-    # Filter out LinkedIn-inappropriate content by title keywords
-    def is_linkedin_appropriate(item: dict) -> bool:
-        text = (item.get("title", "") + " " + item.get("description", "")).lower()
-        return not any(pat in text for pat in LINKEDIN_EXCLUDE_PATTERNS)
-
-    filtered_items = [i for i in eligible_items if is_linkedin_appropriate(i)]
-    if filtered_items:
-        eligible_items = filtered_items
-    else:
+    filtered = [i for i in items if _is_linkedin_appropriate(i)]
+    if filtered:
+        return filtered
+    if items:
         print("NOTE: All eligible content matched exclusion filter — using unfiltered list.", file=sys.stderr)
+        return items
 
-    if not eligible_items:
-        # Cooldown reset: fall back to oldest items
-        print("NOTE: All content within cooldown window. Resetting to oldest items.", file=sys.stderr)
-        eligible_items = get_oldest_content_by_platform(conn, "linkedin")[:20]
+    print("NOTE: All content within cooldown window. Resetting to oldest items.", file=sys.stderr)
+    return get_oldest_content_by_platform(conn, "linkedin")[:20]
+
+
+def _is_linkedin_appropriate(item: dict) -> bool:
+    text = (item.get("title", "") + " " + item.get("description", "")).lower()
+    return not any(pat in text for pat in LINKEDIN_EXCLUDE_PATTERNS)
+
+
+def pick_content(
+    conn: sqlite3.Connection,
+    config: dict,
+    platforms: list[str] | None = None,
+    content_type_pref: str = "business",
+) -> dict:
+    client = anthropic.Anthropic(api_key=config["anthropic_api_key"])
+    active_platforms = platforms or ["linkedin"]
+
+    eligible_items = _resolve_eligible_items(conn, active_platforms)
 
     if not eligible_items:
         print("ERROR: Content catalog is empty. Run the Medium archive importer first.", file=sys.stderr)
@@ -110,13 +129,19 @@ def pick_content(conn: sqlite3.Connection, config: dict, platforms: list[str] | 
     recent_history = get_recent_post_history(conn, days=7)
     catalog_text = _build_catalog_text(eligible_items, recent_history)
 
+    platform_label = active_platforms[0] if len(active_platforms) == 1 else "/".join(active_platforms)
+    scoring_system_prompt = _SCORING_SYSTEM_PROMPT_TEMPLATE.format(
+        platform=platform_label,
+        content_type_pref=content_type_pref,
+    )
+
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=512,
         system=[
             {
                 "type": "text",
-                "text": SCORING_SYSTEM_PROMPT,
+                "text": scoring_system_prompt,
                 "cache_control": {"type": "ephemeral"},
             }
         ],
@@ -129,8 +154,6 @@ def pick_content(conn: sqlite3.Connection, config: dict, platforms: list[str] | 
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
-        # Try to extract JSON from response if model added any surrounding text
-        import re
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
             print(f"ERROR: Scorer returned non-JSON response:\n{raw}", file=sys.stderr)

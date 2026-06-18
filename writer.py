@@ -1,6 +1,3 @@
-import json
-import sys
-
 import anthropic
 
 from config import CLAUDE_MODEL
@@ -26,11 +23,11 @@ Description: {description}
 
 Requirements:
 - One short paragraph. 40–60 words. That's it.
-- First person, direct and conversational
-- Hook and what it's about. No link — it will be posted as the first comment.
-- End with 3–5 relevant keyword hashtags drawn from the content's topic
+- First person. State clearly what the article is about and why it's worth reading.
+- Lead with the core idea or question the piece addresses — not a vague hook.
+- No link in the post body — it will go in the first comment.
+- End with 3–5 relevant hashtags drawn from the content's actual topic.
 - Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
-- No em-dash abuse. No "In today's world" opener. No "I'm excited to share." Don't be clever.
 - Output the post text only, no surrounding explanation.
 """
 
@@ -43,11 +40,10 @@ URL: {url}
 Description: {description}
 
 Requirements:
-- Punchy, casual, slightly irreverent tone. One or two sentences max.
-- Structure: hook + link
-- End with 2–3 relevant keyword hashtags drawn from the content's topic, plus #AIPromoted
-- The entire post including the URL must be under 280 characters total
-- No corporate-speak. No "🧵" or "thread" references. No rhetorical "ever wonder why".
+- One or two plain sentences. Conversational, not performative.
+- Say what the piece is actually about and include the link.
+- End with 2–3 relevant hashtags from the content's topic, plus #AIPromoted.
+- The entire post including the URL must be under 280 characters total.
 - Output the post text only, no surrounding explanation.
 """
 

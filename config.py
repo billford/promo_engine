@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-REQUIRED_KEYS = ["ANTHROPIC_API_KEY", "PUBLORA_API_KEY"]
+REQUIRED_KEYS = ["ANTHROPIC_API_KEY"]
 
 CLAUDE_MODEL = "claude-opus-4-7"
 MEDIUM_RSS_URL = "https://medium.com/feed/@billfordx"
@@ -23,7 +23,9 @@ def load_config() -> dict:
     return {
         "anthropic_api_key": os.environ["ANTHROPIC_API_KEY"],
         "youtube_api_key": os.getenv("YOUTUBE_API_KEY"),
-        "publora_api_key": os.environ["PUBLORA_API_KEY"],
+        "publora_api_key": os.getenv("PUBLORA_API_KEY"),
+        "bluesky_handle": os.getenv("BLUESKY_HANDLE"),
+        "bluesky_app_password": os.getenv("BLUESKY_APP_PASSWORD"),
         "timezone": os.getenv("TIMEZONE", "America/New_York"),
         "db_path": os.getenv("DB_PATH", "promo_engine.db"),
     }

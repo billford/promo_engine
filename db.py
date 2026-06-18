@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS content (
     published_date TEXT,
     description TEXT,
     tags TEXT,
-    fetched_at TEXT
+    fetched_at TEXT,
+    content_type TEXT
 );
 
 CREATE TABLE IF NOT EXISTS post_history (
@@ -55,26 +56,38 @@ def get_conn(db_path: str):
 def init_db(db_path: str) -> None:
     with get_conn(db_path) as conn:
         conn.executescript(SCHEMA)
-        try:
-            conn.execute("ALTER TABLE post_history ADD COLUMN scheduled_for TEXT")
-        except sqlite3.OperationalError:
-            pass  # column already exists
+        for alter in [
+            "ALTER TABLE post_history ADD COLUMN scheduled_for TEXT",
+            "ALTER TABLE content ADD COLUMN content_type TEXT",
+        ]:
+            try:
+                conn.execute(alter)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
     conn.execute(
         """
         INSERT OR IGNORE INTO content
-            (id, source, title, url, published_date, description, tags, fetched_at)
+            (id, source, title, url, published_date, description, tags, fetched_at, content_type)
         VALUES
-            (:id, :source, :title, :url, :published_date, :description, :tags, :fetched_at)
+            (:id, :source, :title, :url, :published_date, :description, :tags, :fetched_at, :content_type)
         """,
         {
             **item,
             "tags": json.dumps(item.get("tags", [])),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "content_type": item.get("content_type"),
         },
     )
+
+
+def get_unclassified_content(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, title, description FROM content WHERE content_type IS NULL ORDER BY published_date DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_all_content(conn: sqlite3.Connection) -> list[dict]:

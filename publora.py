@@ -1,4 +1,4 @@
-import subprocess
+import subprocess  # nosec B404 - used only for osascript macOS system calls
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -22,10 +22,12 @@ def _get_scheduled_times(api_key: str, platform: str) -> set[str]:
                 timeout=15,
             )
         except requests.RequestException as exc:
-            print(f"WARNING: Publora /list-posts network failure: {exc} — skipping collision check", file=sys.stderr)
+            print(f"WARNING: Publora /list-posts network failure: {exc} — skipping collision check",
+                  file=sys.stderr)
             return times
         if resp.status_code != 200:
-            print(f"WARNING: Publora /list-posts returned {resp.status_code} — skipping collision check", file=sys.stderr)
+            print(f"WARNING: Publora /list-posts returned {resp.status_code} — skipping collision check",
+                  file=sys.stderr)
             return times
         data = resp.json()
         for post in data.get("posts", []):
@@ -154,7 +156,7 @@ def _notify_linkedin_comment(title: str, url: str) -> None:
         f'subtitle "{safe_title}"'
     )
     try:
-        subprocess.run(["osascript", "-e", script], check=True, capture_output=True)
+        subprocess.run(["/usr/bin/osascript", "-e", script], check=True, capture_output=True)  # nosec B603
     except subprocess.CalledProcessError as exc:
         print(f"WARNING: macOS notification failed: {exc.stderr.decode().strip()}", file=sys.stderr)
 
@@ -170,7 +172,8 @@ def process_pending_comments(conn, config: dict) -> None:
 
         if age_hours > 48:
             # Post never published or Publora marked it failed — stop retrying
-            print(f"WARNING: giving up on first comment for '{row['content_title']}' (>48h) — sending notification", file=sys.stderr)
+            print(f"WARNING: giving up on first comment for '{row['content_title']}' (>48h) — sending notification",
+                  file=sys.stderr)
             _notify_linkedin_comment(row["content_title"] or "a recent post", row["content_url"])
             mark_comment_done(conn, row["id"])
             conn.commit()
@@ -183,7 +186,8 @@ def process_pending_comments(conn, config: dict) -> None:
                 mark_comment_done(conn, row["id"])
                 conn.commit()
             else:
-                print(f"WARNING: LinkedIn comment API failed for '{row['content_title']}' — will retry next run", file=sys.stderr)
+                print(f"WARNING: LinkedIn comment API failed for '{row['content_title']}' — will retry next run",
+                      file=sys.stderr)
                 _notify_linkedin_comment(row["content_title"] or "a recent post", row["content_url"])
         else:
             print(f"Post not yet live for '{row['content_title']}' — will retry next run")
