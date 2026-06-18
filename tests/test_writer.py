@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from writer import _enforce_bluesky_limit, write_posts
+from writer import _enforce_bluesky_limit, write_posts, BLUESKY_DISCLAIMER
 
 
 def test_bluesky_limit_under_280_unchanged():
@@ -51,7 +51,7 @@ def test_write_posts_returns_both_platforms(mock_cls):
 
 
 @patch("writer.anthropic.Anthropic")
-def test_write_posts_adds_ai_promoted_if_missing(mock_cls):
+def test_write_posts_adds_ai_promoted_and_disclaimer_if_missing(mock_cls):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
     short_post = "A post https://example.com/a #tag"
@@ -67,4 +67,5 @@ def test_write_posts_adds_ai_promoted_if_missing(mock_cls):
     }
     result = write_posts(content, {"anthropic_api_key": "key"})
     assert "#AIPromoted" in result["bluesky"]
+    assert BLUESKY_DISCLAIMER in result["bluesky"]
     assert len(result["bluesky"]) <= 280
