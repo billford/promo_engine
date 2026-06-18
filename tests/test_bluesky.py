@@ -1,5 +1,5 @@
-import pytest
 from unittest.mock import MagicMock, patch
+import pytest
 from bluesky import _url_facets, post_to_bluesky
 
 

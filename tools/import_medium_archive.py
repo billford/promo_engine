@@ -2,15 +2,14 @@
 """One-time importer: seeds the full Medium catalog from a Medium data export."""
 
 import argparse
-import os
 import re
 import sys
-from datetime import timezone, datetime
 from pathlib import Path
 
 # Allow running from tools/ or from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# pylint: disable=wrong-import-position
 from bs4 import BeautifulSoup
 from db import init_db, get_conn, upsert_content
 
@@ -25,7 +24,7 @@ def parse_date_from_filename(filename: str) -> str:
 def parse_post(html_path: Path) -> dict | None:
     try:
         soup = BeautifulSoup(html_path.read_text(encoding="utf-8", errors="replace"), "lxml")
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         return None
 
     # Canonical URL — Medium exports use <a class="p-canonical"> in the footer
@@ -122,7 +121,7 @@ def run(archive_path: Path, db_path: str, verbose: bool, dry_run: bool) -> None:
             if verbose:
                 print(f"  Imported: {post['title'][:80]}")
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Imported:       {imported:>4}")
     print(f"  Skipped:        {skipped:>4}  (no canonical URL)")
     if not dry_run:

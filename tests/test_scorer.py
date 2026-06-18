@@ -94,7 +94,11 @@ def test_pick_content_returns_required_keys(mock_cls, db_path):
 def test_pick_content_handles_json_with_preamble(mock_cls, db_path):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
-    raw = 'Here is my pick:\n{"content_id":"http://example.com/1","title":"T","url":"http://example.com/1","source":"medium","rationale":"r"}'
+    raw = (
+        'Here is my pick:\n'
+        '{"content_id":"http://example.com/1","title":"T",'
+        '"url":"http://example.com/1","source":"medium","rationale":"r"}'
+    )
     mock_client.messages.create.return_value = MagicMock(
         content=[MagicMock(text=raw)]
     )
