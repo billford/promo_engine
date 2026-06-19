@@ -23,6 +23,7 @@ Description: {description}
 
 Requirements:
 - One short paragraph. 40–60 words. That's it.
+- Avoid em-dashes (—). Use a comma, period, or restructure the sentence instead.
 - First person. State clearly what the article is about and why it's worth reading.
 - Lead with the core idea or question the piece addresses — not a vague hook.
 - No link in the post body — it will go in the first comment.
@@ -43,6 +44,7 @@ Description: {description}
 
 Requirements:
 - One or two plain sentences. Conversational, not performative.
+- No em-dashes (—). Use a comma, period, or just cut the clause instead.
 - Say what the piece is actually about and include the link.
 - End with 2–3 relevant hashtags from the content's topic, plus #AIPromoted.
 - Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
