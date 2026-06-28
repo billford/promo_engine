@@ -39,7 +39,7 @@ def create_facebook_reminder(title: str, post_text: str, config: dict) -> None:
             ["/usr/bin/osascript", "-e", script],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60,
             check=True,
         )
         created_name = result.stdout.strip()
