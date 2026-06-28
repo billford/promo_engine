@@ -8,6 +8,7 @@ from db import init_db, get_conn, insert_post_record
 PLATFORM_CONTENT_TYPE = {
     "linkedin": "business",
     "bluesky": "personal",
+    "facebook": "personal",
 }
 
 
@@ -17,9 +18,9 @@ def parse_args():
     parser.add_argument("--skip-collect", action="store_true", help="Skip catalog refresh")
     parser.add_argument(
         "--platform",
-        choices=["linkedin", "bluesky", "both"],
-        default="linkedin",
-        help="Which platform(s) to post to",
+        choices=["linkedin", "bluesky", "facebook", "all"],
+        default="all",
+        help="Which platform(s) to post to (default: all)",
     )
     parser.add_argument("--verbose", action="store_true", help="Print scorer rationale and full post text")
     parser.add_argument("--report", action="store_true", help="Print weekly posting report and exit")
@@ -69,11 +70,21 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
     post_text = posts[platform]
 
     if args.dry_run or args.verbose:
+        label = "FACEBOOK (Reminder)" if platform == "facebook" else platform.upper()
         if args.dry_run:
-            print(f"\n[DRY RUN] {platform.upper()}")
+            print(f"\n[DRY RUN] {label}")
         else:
-            print(f"\n--- {platform.upper()} ---")
+            print(f"\n--- {label} ---")
         print(post_text)
+        if args.dry_run and platform == "facebook":
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(config.get("timezone", "America/New_York"))
+            now = datetime.now(tz)
+            due_dt = now.replace(hour=10, minute=0, second=0, microsecond=0)
+            if due_dt <= now:
+                due_dt += timedelta(days=1)
+            print(f"Would create Reminder due: {due_dt.strftime('%Y-%m-%dT%H:%M:%S')} local")
 
     if args.dry_run:
         insert_post_record(
@@ -119,6 +130,16 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
             publora_post_id=uri,
         )
 
+    elif platform == "facebook":
+        from facebook import create_facebook_reminder
+        create_facebook_reminder(selected["title"], post_text, config)
+        insert_post_record(
+            conn,
+            content_id=selected["content_id"],
+            platform=platform,
+            post_text=post_text,
+        )
+
 
 def main():
     args = parse_args()
@@ -127,7 +148,7 @@ def main():
     db_path = config["db_path"]
     init_db(db_path)
 
-    platforms = ["linkedin", "bluesky"] if args.platform == "both" else [args.platform]
+    platforms = ["linkedin", "bluesky", "facebook"] if args.platform == "all" else [args.platform]
 
     with get_conn(db_path) as conn:
 

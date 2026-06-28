@@ -27,5 +27,6 @@ def load_config() -> dict:
         "bluesky_handle": os.getenv("BLUESKY_HANDLE"),
         "bluesky_app_password": os.getenv("BLUESKY_APP_PASSWORD"),
         "timezone": os.getenv("TIMEZONE", "America/New_York"),
+        "reminders_list": os.getenv("REMINDERS_LIST", "Social Posts"),
         "db_path": os.getenv("DB_PATH", "promo_engine.db"),
     }

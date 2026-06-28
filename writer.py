@@ -34,6 +34,25 @@ Requirements:
 
 BLUESKY_DISCLAIMER = "[Post written by AI Promotion Engine — article is all human]"
 
+FACEBOOK_PROMPT_TEMPLATE = """\
+Write a Facebook post promoting this piece of content.
+
+Content title: {title}
+Source: {source}
+URL: {url}
+Description: {description}
+
+Requirements:
+- Casual, personal, conversational. Same energy as a real person sharing something interesting.
+- No em-dashes (—). Use a comma, period, or just cut the clause instead.
+- Personal hook or observation first, then context, then the link.
+- 100–200 words total.
+- 3–4 relevant hashtags leaning toward the content's actual topic. Conspiracy, paranormal, pop culture, and tech tags all welcome here.
+- Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
+- This post will be copy-pasted and posted manually. Write it ready to post as-is.
+- Output the post text only, no surrounding explanation.
+"""
+
 BLUESKY_PROMPT_TEMPLATE = """\
 Write a Bluesky post promoting this piece of content.
 
@@ -121,7 +140,16 @@ def write_posts(content: dict, config: dict) -> dict:
         candidate = bluesky_post.rstrip() + "\n" + BLUESKY_DISCLAIMER
         bluesky_post = _enforce_bluesky_limit(candidate, content["url"])
 
+    facebook_prompt = FACEBOOK_PROMPT_TEMPLATE.format(
+        title=content["title"],
+        source=content["source"],
+        url=content["url"],
+        description=description,
+    )
+    facebook_post = call_claude(facebook_prompt)
+
     return {
         "linkedin": linkedin_post,
         "bluesky": bluesky_post,
+        "facebook": facebook_post,
     }

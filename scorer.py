@@ -95,12 +95,13 @@ def _resolve_eligible_items(conn: sqlite3.Connection, active_platforms: list[str
     recently_selected = get_recently_selected_ids(conn, days=7)
     items = [v for k, v in merged.items() if k in eligible_ids and k not in recently_selected]
 
-    filtered = [i for i in items if _is_linkedin_appropriate(i)]
-    if filtered:
-        return filtered
-    if items:
-        print("NOTE: All eligible content matched exclusion filter — using unfiltered list.", file=sys.stderr)
-        return items
+    if "linkedin" in active_platforms:
+        filtered = [i for i in items if _is_linkedin_appropriate(i)]
+        if filtered:
+            return filtered
+        if items:
+            print("NOTE: All eligible content matched exclusion filter — using unfiltered list.", file=sys.stderr)
+            return items
 
     print("NOTE: All content within cooldown window. Resetting to oldest items.", file=sys.stderr)
     return get_oldest_content_by_platform(conn, "linkedin")[:20]
