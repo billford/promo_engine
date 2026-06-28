@@ -5,4 +5,4 @@ requests
 python-dotenv
 beautifulsoup4
 lxml
-pyobjc-framework-EventKit
+pyobjc-framework-EventKit; sys_platform == "darwin"
