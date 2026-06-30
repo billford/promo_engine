@@ -80,12 +80,10 @@ def _get_accounts(api_key: str) -> dict[str, str]:
     try:
         resp = requests.get(url, headers=_headers(api_key), timeout=15)
     except requests.RequestException as exc:
-        print(f"ERROR: Publora /platform-connections network failure: {exc}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Publora /platform-connections network failure: {exc}") from exc
 
     if resp.status_code != 200:
-        print(f"ERROR: Publora /platform-connections returned {resp.status_code}: {resp.text}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Publora /platform-connections returned {resp.status_code}: {resp.text}")
 
     accounts = {}
     for conn in resp.json().get("connections", []):
@@ -209,12 +207,10 @@ def schedule_post(api_key: str, account_id: str, post_text: str, scheduled_time:
         resp = _post_once(api_key, payload)
 
     if resp is None:
-        print("ERROR: Publora post failed after retry (network error)", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError("Publora post failed after retry (network error)")
 
     if resp.status_code != 200:
-        print(f"ERROR: Publora /create-post returned {resp.status_code}:\n{resp.text}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Publora /create-post returned {resp.status_code}:\n{resp.text}")
 
     return resp.json()
 
@@ -237,9 +233,10 @@ def run_publora(
     for platform in platforms:
         account_id = accounts.get(platform)
         if not account_id:
-            print(f"ERROR: No Publora account found for platform '{platform}'.", file=sys.stderr)
-            print(f"       Connected accounts: {list(accounts.keys())}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(
+                f"No Publora account found for platform '{platform}'. "
+                f"Connected accounts: {list(accounts.keys())}"
+            )
 
         scheduled_time = _next_scheduled_time(conn, platform, config["timezone"], api_key)
         post_text = posts[platform]

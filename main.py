@@ -167,7 +167,11 @@ def main():
             print("Skipping catalog refresh (--skip-collect).")
 
         for platform in platforms:
-            run_platform(platform, conn, config, args)
+            try:
+                run_platform(platform, conn, config, args)
+                conn.commit()
+            except RuntimeError as exc:
+                print(f"ERROR [{platform}]: {exc}", file=sys.stderr)
 
     if args.dry_run:
         print("\nDry run complete. Records logged to DB with dry_run=1.")

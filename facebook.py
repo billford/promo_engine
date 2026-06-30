@@ -47,14 +47,10 @@ def create_facebook_reminder(title: str, post_text: str, config: dict) -> None:
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.strip()
         if "not authorized" in stderr.lower() or "permission" in stderr.lower():
-            print(
-                "ERROR: Reminders access denied.\n"
-                "Grant access in: System Settings → Privacy & Security → Reminders",
-                file=sys.stderr,
-            )
-        else:
-            print(f"ERROR: Failed to create Reminder: {stderr}", file=sys.stderr)
-        sys.exit(1)
-    except subprocess.TimeoutExpired:
-        print("ERROR: Reminders creation timed out.", file=sys.stderr)
-        sys.exit(1)
+            raise RuntimeError(
+                "Reminders access denied. "
+                "Grant access in: System Settings → Privacy & Security → Reminders"
+            ) from exc
+        raise RuntimeError(f"Failed to create Reminder: {stderr}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Reminders creation timed out.") from exc

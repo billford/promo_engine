@@ -124,8 +124,7 @@ def pick_content(
     eligible_items = _resolve_eligible_items(conn, active_platforms)
 
     if not eligible_items:
-        print("ERROR: Content catalog is empty. Run the Medium archive importer first.", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError("Content catalog is empty. Run the Medium archive importer first.")
 
     recent_history = get_recent_post_history(conn, days=7)
     catalog_text = _build_catalog_text(eligible_items, recent_history)
@@ -157,13 +156,11 @@ def pick_content(
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
-            print(f"ERROR: Scorer returned non-JSON response:\n{raw}", file=sys.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"Scorer returned non-JSON response:\n{raw}")
         result = json.loads(match.group())
 
     required = {"content_id", "title", "url", "source", "rationale"}
     if not required.issubset(result.keys()):
-        print(f"ERROR: Scorer response missing keys: {required - result.keys()}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Scorer response missing keys: {required - result.keys()}")
 
     return result
