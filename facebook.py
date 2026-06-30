@@ -1,5 +1,4 @@
 import subprocess  # nosec B404 - used only for osascript macOS system calls
-import sys
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 

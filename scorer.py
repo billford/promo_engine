@@ -156,7 +156,7 @@ def pick_content(
     except json.JSONDecodeError:
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
-            raise RuntimeError(f"Scorer returned non-JSON response:\n{raw}")
+            raise RuntimeError(f"Scorer returned non-JSON response:\n{raw}") from None
         result = json.loads(match.group())
 
     required = {"content_id", "title", "url", "source", "rationale"}
