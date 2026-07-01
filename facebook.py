@@ -1,6 +1,9 @@
-import subprocess  # nosec B404 - used only for osascript macOS system calls
+import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+import EventKit  # pylint: disable=import-error
+from Foundation import NSDate, NSCalendar  # pylint: disable=import-error,no-name-in-module
 
 
 def create_facebook_reminder(title: str, post_text: str, config: dict) -> None:
@@ -12,44 +15,58 @@ def create_facebook_reminder(title: str, post_text: str, config: dict) -> None:
     if due_dt <= now:
         due_dt += timedelta(days=1)
 
-    due_str = due_dt.strftime("%m/%d/%Y %I:%M:%S %p")
-    reminder_title = f"Post to Facebook: {title}"
+    store = EventKit.EKEventStore.alloc().init()
 
-    def esc(s: str) -> str:
-        return s.replace("\\", "\\\\").replace('"', '\\"')
+    granted_event = threading.Event()
+    access_result = [False]
 
-    script = (
-        'tell application "Reminders"\n'
-        f'    try\n'
-        f'        set theList to list "{esc(list_name)}"\n'
-        f'    on error\n'
-        f'        make new list with properties {{name:"{esc(list_name)}"}}\n'
-        f'        set theList to list "{esc(list_name)}"\n'
-        f'    end try\n'
-        f'    make new reminder in theList with properties '
-        f'{{name:"{esc(reminder_title)}", body:"{esc(post_text)}", '
-        f'due date:date "{due_str}", priority:5}}\n'
-        f'    return name of result\n'
-        f'end tell\n'
-    )
+    def _on_access(granted, _error):
+        access_result[0] = bool(granted)
+        granted_event.set()
 
-    try:
-        result = subprocess.run(  # nosec B603 B607
-            ["/usr/bin/osascript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=True,
+    store.requestAccessToEntityType_completion_(EventKit.EKEntityTypeReminder, _on_access)
+    if not granted_event.wait(timeout=10):
+        raise RuntimeError("Reminders access request timed out.")
+    if not access_result[0]:
+        raise RuntimeError(
+            "Reminders access denied. "
+            "Grant access in: System Settings → Privacy & Security → Reminders"
         )
-        created_name = result.stdout.strip()
-        print(f"Created Reminder: {created_name} (due {due_dt.strftime('%Y-%m-%d %H:%M %Z')})")
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.strip()
-        if "not authorized" in stderr.lower() or "permission" in stderr.lower():
-            raise RuntimeError(
-                "Reminders access denied. "
-                "Grant access in: System Settings → Privacy & Security → Reminders"
-            ) from exc
-        raise RuntimeError(f"Failed to create Reminder: {stderr}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("Reminders creation timed out.") from exc
+
+    # Find or create the target list
+    calendars = store.calendarsForEntityType_(EventKit.EKEntityTypeReminder)
+    target_cal = next((c for c in calendars if c.title() == list_name), None)
+    if target_cal is None:
+        source = store.defaultCalendarForNewReminders().source()
+        target_cal = EventKit.EKCalendar.calendarForEntityType_eventStore_(
+            EventKit.EKEntityTypeReminder, store
+        )
+        target_cal.setTitle_(list_name)
+        target_cal.setSource_(source)
+        store.saveCalendar_commit_error_(target_cal, True, None)
+
+    reminder_title = f"Post to Facebook: {title}"
+    reminder = EventKit.EKReminder.reminderWithEventStore_(store)
+    reminder.setTitle_(reminder_title)
+    reminder.setNotes_(post_text)
+    reminder.setCalendar_(target_cal)
+    reminder.setPriority_(5)
+
+    nsdate = NSDate.dateWithTimeIntervalSince1970_(due_dt.timestamp())
+    ns_cal = NSCalendar.currentCalendar()
+    units = (
+        EventKit.NSCalendarUnitYear
+        | EventKit.NSCalendarUnitMonth
+        | EventKit.NSCalendarUnitDay
+        | EventKit.NSCalendarUnitHour
+        | EventKit.NSCalendarUnitMinute
+    )
+    components = ns_cal.components_fromDate_(units, nsdate)
+    reminder.setDueDateComponents_(components)
+    reminder.addAlarm_(EventKit.EKAlarm.alarmWithAbsoluteDate_(nsdate))
+
+    success = store.saveReminder_commit_error_(reminder, True, None)
+    if not success:
+        raise RuntimeError("EventKit failed to save reminder.")
+
+    print(f"Created Reminder: {reminder_title} (due {due_dt.strftime('%Y-%m-%d %H:%M %Z')})")

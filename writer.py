@@ -32,7 +32,6 @@ Requirements:
 - Output the post text only, no surrounding explanation.
 """
 
-BLUESKY_DISCLAIMER = "[Post written by AI Promotion Engine — article is all human]"
 
 FACEBOOK_PROMPT_TEMPLATE = """\
 Write a Facebook post promoting this piece of content.
@@ -66,9 +65,8 @@ Requirements:
 - No em-dashes (—). Use a comma, period, or just cut the clause instead.
 - Say what the piece is actually about and include the link.
 - End with 2–3 relevant hashtags from the content's topic, plus #AIPromoted.
-- Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
-- The entire post including the URL and disclaimer must be under 280 characters total.
-- Keep the body text short to leave room for the URL and disclaimer.
+- The entire post including the URL must be under 280 characters total.
+- Keep the body text short to leave room for the URL and hashtags.
 - Output the post text only, no surrounding explanation.
 """
 
@@ -133,11 +131,6 @@ def write_posts(content: dict, config: dict) -> dict:
     # Ensure #AIPromoted is present
     if "#AIPromoted" not in bluesky_post:
         candidate = bluesky_post.rstrip() + " #AIPromoted"
-        bluesky_post = _enforce_bluesky_limit(candidate, content["url"])
-
-    # Ensure disclaimer is present
-    if BLUESKY_DISCLAIMER not in bluesky_post:
-        candidate = bluesky_post.rstrip() + "\n" + BLUESKY_DISCLAIMER
         bluesky_post = _enforce_bluesky_limit(candidate, content["url"])
 
     facebook_prompt = FACEBOOK_PROMPT_TEMPLATE.format(
