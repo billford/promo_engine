@@ -17,21 +17,26 @@ def create_facebook_reminder(title: str, post_text: str, config: dict) -> None:
 
     store = EventKit.EKEventStore.alloc().init()
 
-    granted_event = threading.Event()
-    access_result = [False]
+    auth_status = EventKit.EKEventStore.authorizationStatusForEntityType_(
+        EventKit.EKEntityTypeReminder
+    )
+    # EKAuthorizationStatusAuthorized == 3; skip the async request if already granted
+    if auth_status != EventKit.EKAuthorizationStatusAuthorized:
+        granted_event = threading.Event()
+        access_result = [False]
 
-    def _on_access(granted, _error):
-        access_result[0] = bool(granted)
-        granted_event.set()
+        def _on_access(granted, _error):
+            access_result[0] = bool(granted)
+            granted_event.set()
 
-    store.requestAccessToEntityType_completion_(EventKit.EKEntityTypeReminder, _on_access)
-    if not granted_event.wait(timeout=10):
-        raise RuntimeError("Reminders access request timed out.")
-    if not access_result[0]:
-        raise RuntimeError(
-            "Reminders access denied. "
-            "Grant access in: System Settings → Privacy & Security → Reminders"
-        )
+        store.requestAccessToEntityType_completion_(EventKit.EKEntityTypeReminder, _on_access)
+        if not granted_event.wait(timeout=10):
+            raise RuntimeError("Reminders access request timed out.")
+        if not access_result[0]:
+            raise RuntimeError(
+                "Reminders access denied. "
+                "Grant access in: System Settings → Privacy & Security → Reminders"
+            )
 
     # Find or create the target list
     calendars = store.calendarsForEntityType_(EventKit.EKEntityTypeReminder)

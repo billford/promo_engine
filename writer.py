@@ -24,8 +24,10 @@ Description: {description}
 Requirements:
 - One short paragraph. 40–60 words. That's it.
 - Avoid em-dashes (—). Use a comma, period, or restructure the sentence instead.
-- First person. State clearly what the article is about and why it's worth reading.
-- Lead with the core idea or question the piece addresses — not a vague hook.
+- Summarize what the piece actually covers. Lead with the substance, not a personal anecdote.
+- Do NOT open with "spent X time/years doing Y" or any variation of that construction.
+- Do NOT editorialize. No "fascinating," "important," "you should read this," or similar. Let the content speak.
+- Vary the sentence structure. Do not default to a fixed opener pattern.
 - No link in the post body — it will go in the first comment.
 - End with 3–5 relevant hashtags drawn from the content's actual topic.
 - Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
@@ -42,9 +44,11 @@ URL: {url}
 Description: {description}
 
 Requirements:
-- Casual, personal, conversational. Same energy as a real person sharing something interesting.
+- Casual, conversational. Same energy as a real person sharing something interesting with friends.
 - No em-dashes (—). Use a comma, period, or just cut the clause instead.
-- Personal hook or observation first, then context, then the link.
+- Tell people what the piece is actually about. Summarize the substance, don't just tease it.
+- Do NOT editorialize. No "this is fascinating," "everyone should read this," "mind-blowing," or similar. Let the content speak.
+- Vary the structure. Don't always open with a personal anecdote. Could start with what the piece covers, a question it answers, a surprising detail from it, or a direct statement of the topic.
 - 100–200 words total.
 - 3–4 relevant hashtags leaning toward the content's actual topic. Conspiracy, paranormal, pop culture, and tech tags all welcome here.
 - Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
