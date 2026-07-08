@@ -59,6 +59,7 @@ def init_db(db_path: str) -> None:
         for alter in [
             "ALTER TABLE post_history ADD COLUMN scheduled_for TEXT",
             "ALTER TABLE content ADD COLUMN content_type TEXT",
+            "ALTER TABLE content ADD COLUMN full_content_fetched INTEGER DEFAULT 0",
         ]:
             try:
                 conn.execute(alter)
@@ -67,20 +68,49 @@ def init_db(db_path: str) -> None:
 
 
 def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    params = {
+        **item,
+        "tags": json.dumps(item.get("tags", [])),
+        "fetched_at": now,
+        "content_type": item.get("content_type"),
+        "full_content_fetched": item.get("full_content_fetched", 0),
+    }
     conn.execute(
         """
-        INSERT OR IGNORE INTO content
-            (id, source, title, url, published_date, description, tags, fetched_at, content_type)
+        INSERT INTO content
+            (id, source, title, url, published_date, description, tags, fetched_at,
+             content_type, full_content_fetched)
         VALUES
-            (:id, :source, :title, :url, :published_date, :description, :tags, :fetched_at, :content_type)
+            (:id, :source, :title, :url, :published_date, :description, :tags, :fetched_at,
+             :content_type, :full_content_fetched)
+        ON CONFLICT(id) DO UPDATE SET
+            description = CASE
+                WHEN length(excluded.description) > length(content.description)
+                THEN excluded.description ELSE content.description END,
+            full_content_fetched = CASE
+                WHEN length(excluded.description) > length(content.description)
+                THEN excluded.full_content_fetched ELSE content.full_content_fetched END,
+            fetched_at = excluded.fetched_at
         """,
-        {
-            **item,
-            "tags": json.dumps(item.get("tags", [])),
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "content_type": item.get("content_type"),
-        },
+        params,
     )
+
+
+def get_content_needing_fetch(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
+    """Articles whose full content has never been fetched (short description, not yet attempted)."""
+    rows = conn.execute(
+        """
+        SELECT id, url FROM content
+        WHERE source = 'medium'
+          AND full_content_fetched = 0
+          AND length(description) < 500
+        ORDER BY published_date DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_unclassified_content(conn: sqlite3.Connection) -> list[dict]:

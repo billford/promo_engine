@@ -7,12 +7,38 @@ from email.utils import parsedate_to_datetime
 
 import anthropic
 import feedparser
+import requests
 from bs4 import BeautifulSoup
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from config import CLAUDE_MODEL, MEDIUM_RSS_URL, YOUTUBE_CHANNEL_HANDLE
-from db import upsert_content, get_unclassified_content
+from db import upsert_content, get_unclassified_content, get_content_needing_fetch
+
+
+_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+
+def _fetch_article_text(url: str) -> str:
+    """Fetch full article text from URL. Returns empty string on failure."""
+    try:
+        r = requests.get(url, headers=_FETCH_HEADERS, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "lxml")
+        article = soup.find("article") or soup
+        text = article.get_text(separator=" ").strip()
+        if "Enable JavaScript" in text[:200]:
+            return ""
+        return text[:3000]
+    except Exception:  # pylint: disable=broad-exception-caught
+        return ""
 
 
 def _now_iso() -> str:
@@ -63,6 +89,7 @@ def collect_medium(conn: sqlite3.Connection, rss_url: str = MEDIUM_RSS_URL) -> i
             "published_date": published,
             "description": description[:3000],
             "tags": tags,
+            "full_content_fetched": 1,
         })
         count += 1
 
@@ -197,6 +224,27 @@ def classify_unclassified(conn: sqlite3.Connection, api_key: str) -> int:
     return count
 
 
+def backfill_article_content(conn: sqlite3.Connection) -> int:
+    """Fetch full content for older articles not in the current RSS window."""
+    items = get_content_needing_fetch(conn, limit=5)
+    fetched = 0
+    for item in items:
+        text = _fetch_article_text(item["url"])
+        if text:
+            conn.execute(
+                "UPDATE content SET description = ?, full_content_fetched = 1 WHERE id = ?",
+                (text, item["id"]),
+            )
+            fetched += 1
+        else:
+            # Mark as attempted so we don't retry on every run
+            conn.execute(
+                "UPDATE content SET full_content_fetched = 1 WHERE id = ?",
+                (item["id"],),
+            )
+    return fetched
+
+
 def run_collector(conn: sqlite3.Connection, config: dict) -> None:
     medium_count = collect_medium(conn)
 
@@ -207,8 +255,9 @@ def run_collector(conn: sqlite3.Connection, config: dict) -> None:
         youtube_count = 0
         print("NOTE: YOUTUBE_API_KEY not set — skipping YouTube collection.")
 
+    backfilled = backfill_article_content(conn)
     classified = classify_unclassified(conn, config["anthropic_api_key"])
     print(
         f"Collector: {medium_count} Medium items, {youtube_count} YouTube items refreshed. "
-        f"{classified} items classified."
+        f"{backfilled} articles backfilled. {classified} items classified."
     )
