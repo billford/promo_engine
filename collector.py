@@ -37,11 +37,16 @@ def collect_medium(conn: sqlite3.Connection, rss_url: str = MEDIUM_RSS_URL) -> i
 
         tags = [t.get("term", "") for t in entry.get("tags", []) if t.get("term")]
 
-        summary = entry.get("summary", "")
+        raw_html = ""
+        if entry.get("content"):
+            raw_html = entry["content"][0].get("value", "")
+        if not raw_html:
+            raw_html = entry.get("summary", "")
         try:
-            summary = BeautifulSoup(summary, "lxml").get_text()[:500]
+            description = BeautifulSoup(raw_html, "lxml").get_text(separator=" ").strip()
         except Exception as exc:  # pylint: disable=broad-exception-caught
             print(f"DEBUG: HTML strip failed for entry {url!r}: {exc}", file=sys.stderr)
+            description = raw_html
 
         published = entry.get("published", "")
         if published:
@@ -56,7 +61,7 @@ def collect_medium(conn: sqlite3.Connection, rss_url: str = MEDIUM_RSS_URL) -> i
             "title": entry.get("title", "").strip(),
             "url": url,
             "published_date": published,
-            "description": summary.strip()[:500],
+            "description": description[:3000],
             "tags": tags,
         })
         count += 1

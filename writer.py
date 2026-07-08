@@ -103,7 +103,7 @@ def write_posts(content: dict, config: dict) -> dict:
         }
     ]
 
-    description = content.get("description", "")[:400]
+    description = content.get("description", "")[:2500]
 
     def call_claude(prompt: str) -> str:
         response = client.messages.create(
