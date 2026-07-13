@@ -50,7 +50,7 @@ This creates a `.venv/` in the project directory and installs all dependencies i
 Medium's RSS only returns ~10 recent posts. Before the first daily run, seed the full catalog from a Medium data export:
 
 1. Medium → Settings → Security and apps → Download your information
-2. Wait 1–2 days for the export email
+2. Wait 1–2 days for the export email -- It almost never takes this long. Typically it's a few minutes. 
 3. Unzip and locate the `posts/` folder
 4. Run the importer:
 
