@@ -26,6 +26,7 @@ Requirements:
 - Avoid em-dashes (—). Use a comma, period, or restructure the sentence instead.
 - Summarize what the piece actually covers. Lead with the substance, not a personal anecdote.
 - Do NOT open with "spent X time/years doing Y" or any variation of that construction.
+- This article may have been published months or years ago — it's being resurfaced from the archive, not freshly written. Do NOT imply recency: no "new piece," "latest piece," "just published," "recently wrote," "this weekend," "this week," or similar. Write as if referencing an existing piece, not announcing one.
 - Do NOT editorialize. No "fascinating," "important," "you should read this," or similar. Let the content speak.
 - Vary the sentence structure. Do not default to a fixed opener pattern.
 - No link in the post body — it will go in the first comment.
@@ -47,6 +48,8 @@ Requirements:
 - Casual, conversational. Same energy as a real person sharing something interesting with friends.
 - No em-dashes (—). Use a comma, period, or just cut the clause instead.
 - Tell people what the piece is actually about. Summarize the substance, don't just tease it.
+- Do NOT open with "spent X time/years doing Y" or any variation of that construction.
+- This article may have been published months or years ago — it's being resurfaced from the archive, not freshly written. Do NOT imply recency: no "new piece," "latest piece," "just published," "recently wrote," "this weekend," "this week," or similar. Write as if referencing an existing piece, not announcing one.
 - Do NOT editorialize. No "this is fascinating," "everyone should read this," "mind-blowing," or similar. Let the content speak.
 - Vary the structure. Don't always open with a personal anecdote. Could start with what the piece covers, a question it answers, a surprising detail from it, or a direct statement of the topic.
 - 100–200 words total.
@@ -67,6 +70,7 @@ Description: {description}
 Requirements:
 - One or two plain sentences. Conversational, not performative.
 - No em-dashes (—). Use a comma, period, or just cut the clause instead.
+- This article may have been published months or years ago — it's being resurfaced from the archive, not freshly written. Do NOT imply recency: no "new piece," "latest piece," "just published," "recently wrote," "this weekend," "this week," or similar. Write as if referencing an existing piece, not announcing one.
 - Say what the piece is actually about and include the link.
 - End with 2–3 relevant hashtags from the content's topic, plus #AIPromoted.
 - The entire post including the URL must be under 280 characters total.
