@@ -104,8 +104,8 @@ def _post_once(api_key: str, payload: dict):
         return None
 
 
-def _get_linkedin_urn(api_key: str, publora_post_id: str) -> str | None:
-    """Fetch the LinkedIn URN for a published post via Publora's get-post endpoint."""
+def _get_post_status(api_key: str, publora_post_id: str) -> dict | None:
+    """Fetch Publora's view of a scheduled post: {"status", "urn", "error"}, or None on lookup failure."""
     try:
         resp = requests.get(
             f"{PUBLORA_BASE_URL}/get-post/{publora_post_id}",
@@ -118,10 +118,28 @@ def _get_linkedin_urn(api_key: str, publora_post_id: str) -> str | None:
         return None
     posts = resp.json().get("posts", [])
     for post in posts:
-        if post.get("status") == "published":
+        status = post.get("status")
+        if status == "published":
             urn = post.get("postedId")
             if urn:
-                return urn
+                return {"status": status, "urn": urn, "error": None}
+        elif status == "failed":
+            error = (
+                post.get("error")
+                or post.get("errorMessage")
+                or post.get("failureReason")
+                or post.get("reason")
+                or "no error detail returned by Publora"
+            )
+            return {"status": status, "urn": None, "error": error}
+    return None
+
+
+def _get_linkedin_urn(api_key: str, publora_post_id: str) -> str | None:
+    """Fetch the LinkedIn URN for a published post via Publora's get-post endpoint."""
+    info = _get_post_status(api_key, publora_post_id)
+    if info and info["status"] == "published":
+        return info["urn"]
     return None
 
 
@@ -159,6 +177,21 @@ def _notify_linkedin_comment(title: str, url: str) -> None:
         print(f"WARNING: macOS notification failed: {exc.stderr.decode().strip()}", file=sys.stderr)
 
 
+def _notify_linkedin_post_failed(title: str, error: str) -> None:
+    """Send a macOS notification that the LinkedIn post itself failed to publish, with Publora's reason."""
+    safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+    safe_error = error.replace("\\", "\\\\").replace('"', '\\"')
+    script = (
+        f'display notification "{safe_error}" '
+        f'with title "LinkedIn post failed to publish" '
+        f'subtitle "{safe_title}"'
+    )
+    try:
+        subprocess.run(["/usr/bin/osascript", "-e", script], check=True, capture_output=True)  # nosec B603
+    except subprocess.CalledProcessError as exc:
+        print(f"WARNING: macOS notification failed: {exc.stderr.decode().strip()}", file=sys.stderr)
+
+
 def process_pending_comments(conn, config: dict) -> None:
     """Post first comments for any LinkedIn posts that have gone live since last run."""
     from db import get_due_pending_comments, mark_comment_done
@@ -177,7 +210,17 @@ def process_pending_comments(conn, config: dict) -> None:
             conn.commit()
             continue
 
-        urn = _get_linkedin_urn(api_key, row["publora_post_id"])
+        info = _get_post_status(api_key, row["publora_post_id"])
+
+        if info and info["status"] == "failed":
+            title = row["content_title"] or "a recent post"
+            print(f"WARNING: LinkedIn post failed to publish for '{title}': {info['error']}", file=sys.stderr)
+            _notify_linkedin_post_failed(title, info["error"])
+            mark_comment_done(conn, row["id"])
+            conn.commit()
+            continue
+
+        urn = info["urn"] if info and info["status"] == "published" else None
         if urn:
             posted = _post_linkedin_comment(api_key, row["platform_account_id"], urn, row["content_url"])
             if posted:
