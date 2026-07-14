@@ -102,9 +102,11 @@ def _resolve_eligible_items(conn: sqlite3.Connection, active_platforms: list[str
         if items:
             print("NOTE: All eligible content matched exclusion filter — using unfiltered list.", file=sys.stderr)
             return items
+    elif items:
+        return items
 
     print("NOTE: All content within cooldown window. Resetting to oldest items.", file=sys.stderr)
-    return get_oldest_content_by_platform(conn, "linkedin")[:20]
+    return get_oldest_content_by_platform(conn, active_platforms[0])[:20]
 
 
 def _is_linkedin_appropriate(item: dict) -> bool:
