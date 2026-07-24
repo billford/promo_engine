@@ -106,6 +106,10 @@ Prints the selected content, rationale, and both post drafts. Logs to DB with `d
 
 Two jobs are required: one to run the daily engine, and one to post the LinkedIn first comment shortly after posts go live.
 
+**Don't put the project directory under `~/Documents`, `~/Desktop`, or any other iCloud Drive-synced folder.** If local disk space gets tight, macOS's "Optimize Mac Storage" will evict the project's files to dataless iCloud placeholders. A scheduled job that fires while a file is mid-fault-in can crash at import time with `OSError: [Errno 11] Resource deadlock avoided` — before any of the app's own retry logic ever runs. Keep the checkout somewhere local-only, e.g. `~/Developer/promo_engine`.
+
+Both jobs should also run through `run_with_retry.sh` instead of calling `python3` directly. It retries the whole invocation (5 attempts, 20s apart) if the process exits non-zero, which is cheap insurance against any other transient startup failure.
+
 ### Option A — macOS launchd (recommended)
 
 **Daily engine** (`~/Library/LaunchAgents/local.promo-engine.daily.plist`):
@@ -120,6 +124,7 @@ Two jobs are required: one to run the daily engine, and one to post the LinkedIn
 
     <key>ProgramArguments</key>
     <array>
+        <string>/path/to/promo_engine/run_with_retry.sh</string>
         <string>/path/to/promo_engine/.venv/bin/python3</string>
         <string>/path/to/promo_engine/main.py</string>
     </array>
@@ -159,6 +164,7 @@ Two jobs are required: one to run the daily engine, and one to post the LinkedIn
 
     <key>ProgramArguments</key>
     <array>
+        <string>/path/to/promo_engine/run_with_retry.sh</string>
         <string>/path/to/promo_engine/.venv/bin/python3</string>
         <string>/path/to/promo_engine/post_comments.py</string>
     </array>
@@ -197,10 +203,10 @@ launchctl load ~/Library/LaunchAgents/local.promo-engine.comments.plist
 
 ```cron
 # Daily engine at 9:00 AM
-0 9 * * * cd /path/to/promo_engine && .venv/bin/python3 main.py >> promo_engine.log 2>&1
+0 9 * * * cd /path/to/promo_engine && ./run_with_retry.sh .venv/bin/python3 main.py >> promo_engine.log 2>&1
 
 # First-comment poster at 9:05 AM
-5 9 * * * cd /path/to/promo_engine && .venv/bin/python3 post_comments.py >> promo_engine.log 2>&1
+5 9 * * * cd /path/to/promo_engine && ./run_with_retry.sh .venv/bin/python3 post_comments.py >> promo_engine.log 2>&1
 ```
 
 The 5-minute gap gives Publora time to publish the scheduled post before the comment script polls for the LinkedIn URN. If a comment still fails (Publora outage, etc.), `process_pending_comments` will retry on the next daily run and fall back to a macOS notification after 48 hours.
@@ -229,6 +235,7 @@ The 5-minute gap gives Publora time to publish the scheduled post before the com
 promo_engine/
 ├── main.py                        # Entry point / orchestrator
 ├── post_comments.py               # Standalone: post LinkedIn first comments
+├── run_with_retry.sh              # Wraps launchd/cron invocations with retry-on-failure
 ├── collector.py                   # Fetches Medium RSS + YouTube catalog
 ├── scorer.py                      # Claude API: picks today's winner
 ├── writer.py                      # Claude API: writes platform posts
