@@ -177,10 +177,12 @@ def _notify_linkedin_comment(title: str, url: str) -> None:
         print(f"WARNING: macOS notification failed: {exc.stderr.decode().strip()}", file=sys.stderr)
 
 
-def _notify_linkedin_post_failed(title: str, error: str) -> None:
+def _notify_linkedin_post_failed(title: str, error) -> None:
     """Send a macOS notification that the LinkedIn post itself failed to publish, with Publora's reason."""
+    if isinstance(error, dict):
+        error = error.get("message") or error.get("code") or str(error)
     safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
-    safe_error = error.replace("\\", "\\\\").replace('"', '\\"')
+    safe_error = str(error).replace("\\", "\\\\").replace('"', '\\"')
     script = (
         f'display notification "{safe_error}" '
         f'with title "LinkedIn post failed to publish" '
