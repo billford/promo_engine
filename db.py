@@ -98,13 +98,12 @@ def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
 
 
 def get_content_needing_fetch(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
-    """Articles whose full content has never been fetched (short description, not yet attempted)."""
+    """Articles whose full content has never been fetched."""
     rows = conn.execute(
         """
         SELECT id, url FROM content
         WHERE source = 'medium'
           AND full_content_fetched = 0
-          AND length(description) < 500
         ORDER BY published_date DESC
         LIMIT ?
         """,
