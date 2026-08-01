@@ -165,4 +165,9 @@ def pick_content(
     if not required.issubset(result.keys()):
         raise RuntimeError(f"Scorer response missing keys: {required - result.keys()}")
 
+    original = next((i for i in eligible_items if i["id"] == result["content_id"]), None)
+    if original is not None:
+        result["description"] = original.get("description", "")
+        result["content_type"] = original.get("content_type")
+
     return result
