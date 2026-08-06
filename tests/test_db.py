@@ -15,6 +15,7 @@ from db import (
     insert_post_record,
     canonical_content_id,
 )
+from tests.fixtures import ARTICLE_BODY
 
 
 MEDIUM_VARIANTS = [
@@ -50,7 +51,7 @@ def test_url_variants_collapse_to_one_catalog_row(db_path):
                 "title": "Help, AI Deleted My Company",
                 "url": url,
                 "published_date": "2026-04-30T18:23:31+00:00",
-                "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
+                "description": ARTICLE_BODY,
                 "tags": [],
             })
         assert len(get_all_content(conn)) == 1
@@ -62,7 +63,7 @@ def test_cooldown_covers_every_url_variant(db_path):
         for url in MEDIUM_VARIANTS:
             upsert_content(conn, {
                 "id": url, "source": "medium", "title": "A Test Article Title", "url": url,
-                "published_date": "2026-04-30T18:23:31+00:00", "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ', "tags": [],
+                "published_date": "2026-04-30T18:23:31+00:00", "description": ARTICLE_BODY, "tags": [],
             })
         insert_post_record(
             conn,
@@ -89,7 +90,7 @@ def _sample_content(content_id="http://example.com/1", source="medium", content_
         "title": "Test Article",
         "url": content_id,
         "published_date": "2024-01-01T00:00:00+00:00",
-        "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
+        "description": ARTICLE_BODY,
         "tags": ["tech", "ai"],
         "content_type": content_type,
     }

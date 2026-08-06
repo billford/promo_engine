@@ -3,9 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from db import init_db, get_conn, upsert_content
 from scorer import _build_catalog_text, pick_content
-
-# Long enough that classify_content_kind() treats fixtures as articles, not replies.
-ARTICLE_BODY = 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. '
+from tests.fixtures import ARTICLE_BODY
 
 
 def _sample_item(content_id="http://example.com/1", content_type="business"):

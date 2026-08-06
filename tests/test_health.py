@@ -4,6 +4,7 @@ import pytest
 
 from db import init_db, get_conn, upsert_content, insert_post_record
 from health import run_health_checks
+from tests.fixtures import ARTICLE_BODY
 
 ARTICLE = "https://billfordx.medium.com/an-article-155c27d86f7f?source=rss-x"
 
@@ -22,7 +23,7 @@ def _add_article(conn, content_id=ARTICLE, content_type="business"):
         "title": "An Article",
         "url": content_id,
         "published_date": "2024-01-01T00:00:00+00:00",
-        "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
+        "description": ARTICLE_BODY,
         "tags": [],
         "content_type": content_type,
         "full_content_fetched": 1,
@@ -81,13 +82,13 @@ def test_cooldown_check_ignores_pre_baseline_history(db_path):
 
 def test_orphan_history_repair_reattaches_by_slug(db_path):
     """A garbled id whose slug uniquely identifies one article should be recovered."""
-    from db import init_db as reinit
     with get_conn(db_path, enforce_fk=False) as conn:
         _add_article(conn)
         insert_post_record(conn, "https://medium.com/@billfordx/an-article-garbled", "linkedin", "t")
         conn.execute("DELETE FROM schema_meta WHERE key = 'orphan_history_repair_v2'")
 
-    reinit(db_path)
+    # Re-run init to trigger the orphan-history repair migration.
+    init_db(db_path)
 
     with get_conn(db_path) as conn:
         assert run_health_checks(conn) == ([], [])

@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from db import init_db, get_conn, upsert_content, get_unclassified_content
 from collector import classify_unclassified, _CLASSIFY_PROMPT
+from tests.fixtures import ARTICLE_BODY
 
 
 def _sample_item(content_id="http://example.com/1"):
@@ -12,7 +13,7 @@ def _sample_item(content_id="http://example.com/1"):
         "title": "Test Article",
         "url": content_id,
         "published_date": "2024-01-01T00:00:00+00:00",
-        "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
+        "description": ARTICLE_BODY,
         "tags": [],
     }
 
