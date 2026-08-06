@@ -131,12 +131,62 @@ def _merge_duplicate_content(conn: sqlite3.Connection) -> int:
     return merged
 
 
+def _migration_applied(conn: sqlite3.Connection, key: str) -> bool:
+    return conn.execute("SELECT 1 FROM schema_meta WHERE key = ?", (key,)).fetchone() is not None
+
+
+def _mark_migration(conn: sqlite3.Connection, key: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
+        (key, datetime.now(timezone.utc).isoformat()),
+    )
+
+
+def _slug_stem(content_id: str) -> str:
+    """Slug with any trailing hash/suffix token removed, for fuzzy orphan matching."""
+    path = content_id.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    return path.rsplit("/", 1)[-1].rsplit("-", 1)[0]
+
+
+def _migrate_orphan_history(conn: sqlite3.Connection) -> None:
+    """Reattach post_history rows whose content_id matches no article.
+
+    A garbled id (see the scorer's id handling) makes an article invisible to the
+    cooldown check forever. Where the slug stem identifies exactly one article we
+    can recover the link; anything ambiguous is left for the health check to report.
+    """
+    if _migration_applied(conn, "orphan_history_repair_v2"):
+        return
+
+    # Match on the stored url, not the id: ids are canonical ("medium:<hash>") and no
+    # longer carry the slug the orphaned history row can be recognised by.
+    stems: dict[str, list[str]] = {}
+    for row in conn.execute("SELECT id, url FROM content"):
+        stems.setdefault(_slug_stem(row["url"] or row["id"]), []).append(row["id"])
+
+    repaired = 0
+    orphans = conn.execute(
+        "SELECT DISTINCT content_id FROM post_history WHERE content_id NOT IN (SELECT id FROM content)"
+    ).fetchall()
+    for row in orphans:
+        matches = stems.get(_slug_stem(row["content_id"]), [])
+        if len(matches) == 1:  # unique match only — never guess between candidates
+            conn.execute(
+                "UPDATE post_history SET content_id = ? WHERE content_id = ?",
+                (matches[0], row["content_id"]),
+            )
+            repaired += 1
+
+    _mark_migration(conn, "orphan_history_repair_v2")
+    if orphans:
+        print(
+            f"Migration: reattached {repaired} of {len(orphans)} orphaned post-history id(s)."
+        )
+
+
 def _migrate_canonical_ids(conn: sqlite3.Connection) -> None:
     """One-time remap of content ids and post history onto canonical article ids."""
-    applied = conn.execute(
-        "SELECT value FROM schema_meta WHERE key = 'canonical_ids'"
-    ).fetchone()
-    if applied:
+    if _migration_applied(conn, "canonical_ids"):
         return
 
     merged = _merge_duplicate_content(conn)
@@ -151,10 +201,7 @@ def _migrate_canonical_ids(conn: sqlite3.Connection) -> None:
             )
             remapped += 1
 
-    conn.execute(
-        "INSERT INTO schema_meta (key, value) VALUES ('canonical_ids', ?)",
-        (datetime.now(timezone.utc).isoformat(),),
-    )
+    _mark_migration(conn, "canonical_ids")
     print(
         f"Migration: merged {merged} duplicate content row(s), "
         f"remapped {remapped} post-history id(s) onto canonical article ids."
@@ -162,9 +209,14 @@ def _migrate_canonical_ids(conn: sqlite3.Connection) -> None:
 
 
 @contextmanager
-def get_conn(db_path: str):
+def get_conn(db_path: str, enforce_fk: bool = True):
+    """Open a connection. Foreign keys are OFF by default in SQLite, which left
+    post_history.content_id -> content.id unchecked and let orphan rows pile up
+    silently; enable them so a bad content_id fails at insert time instead."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    if enforce_fk:
+        conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
         conn.commit()
@@ -173,18 +225,71 @@ def get_conn(db_path: str):
 
 
 def init_db(db_path: str) -> None:
-    with get_conn(db_path) as conn:
+    # Migrations rewrite content ids and delete/reinsert rows that post_history
+    # points at, so they must run with FK enforcement off.
+    with get_conn(db_path, enforce_fk=False) as conn:
         conn.executescript(SCHEMA)
         for alter in [
             "ALTER TABLE post_history ADD COLUMN scheduled_for TEXT",
             "ALTER TABLE content ADD COLUMN content_type TEXT",
             "ALTER TABLE content ADD COLUMN full_content_fetched INTEGER DEFAULT 0",
+            "ALTER TABLE content ADD COLUMN fetch_attempts INTEGER DEFAULT 0",
         ]:
             try:
                 conn.execute(alter)
             except sqlite3.OperationalError:
                 pass  # column already exists
         _migrate_canonical_ids(conn)
+        _migrate_orphan_history(conn)
+        _migrate_retry_thin_descriptions(conn)
+        _ensure_health_baseline(conn)
+
+
+THIN_DESCRIPTION_CHARS = 400
+
+
+def _migrate_retry_thin_descriptions(conn: sqlite3.Connection) -> None:
+    """Re-open articles the old backfill marked done after a failed fetch.
+
+    Failures used to set full_content_fetched = 1 permanently, so a rate-limited
+    fetch locked an article to whatever stub the archive importer captured — some
+    posts were being promoted from a 90-character description.
+    """
+    if _migration_applied(conn, "retry_thin_descriptions"):
+        return
+
+    cursor = conn.execute(
+        """
+        UPDATE content SET full_content_fetched = 0, fetch_attempts = 0
+        WHERE full_content_fetched = 1
+          AND length(COALESCE(description, '')) < ?
+        """,
+        (THIN_DESCRIPTION_CHARS,),
+    )
+    _mark_migration(conn, "retry_thin_descriptions")
+    if cursor.rowcount:
+        print(f"Migration: re-queued {cursor.rowcount} thin article(s) for content backfill.")
+
+
+HEALTH_BASELINE_KEY = "health_baseline"
+
+
+def _ensure_health_baseline(conn: sqlite3.Connection) -> None:
+    """Stamp the moment repeat-suppression was fixed.
+
+    History written before this point contains known cooldown violations. Without a
+    baseline the health check would report them on every run for 90 days, which is
+    the alarm fatigue that let the earlier failures go unnoticed.
+    """
+    if not _migration_applied(conn, HEALTH_BASELINE_KEY):
+        _mark_migration(conn, HEALTH_BASELINE_KEY)
+
+
+def get_health_baseline(conn: sqlite3.Connection) -> str:
+    row = conn.execute(
+        "SELECT value FROM schema_meta WHERE key = ?", (HEALTH_BASELINE_KEY,)
+    ).fetchone()
+    return row["value"] if row else "1970-01-01T00:00:00+00:00"
 
 
 def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
@@ -219,17 +324,25 @@ def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
     )
 
 
+MAX_FETCH_ATTEMPTS = 3
+
+
 def get_content_needing_fetch(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
-    """Articles whose full content has never been fetched."""
+    """Articles whose full content has never been fetched and still have retries left.
+
+    Failures are retried across runs rather than marked done on the first miss: a
+    single network timeout used to lock an article to its RSS snippet permanently.
+    """
     rows = conn.execute(
         """
         SELECT id, url FROM content
         WHERE source = 'medium'
           AND full_content_fetched = 0
+          AND COALESCE(fetch_attempts, 0) < ?
         ORDER BY published_date DESC
         LIMIT ?
         """,
-        (limit,),
+        (MAX_FETCH_ATTEMPTS, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 

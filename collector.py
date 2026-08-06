@@ -2,6 +2,7 @@ import json
 import re
 import sys
 import sqlite3
+import time
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
@@ -15,6 +16,9 @@ from googleapiclient.errors import HttpError
 from config import CLAUDE_MODEL, MEDIUM_RSS_URL, YOUTUBE_CHANNEL_HANDLE
 from db import upsert_content, get_unclassified_content, get_content_needing_fetch
 
+
+FETCH_DELAY_SECONDS = 4
+BACKFILL_BATCH = 10
 
 _FETCH_HEADERS = {
     "User-Agent": (
@@ -37,7 +41,8 @@ def _fetch_article_text(url: str) -> str:
         if "Enable JavaScript" in text[:200]:
             return ""
         return text[:3000]
-    except Exception:  # pylint: disable=broad-exception-caught
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        print(f"DEBUG: article fetch failed for {url}: {exc}", file=sys.stderr)
         return ""
 
 
@@ -241,9 +246,13 @@ def classify_unclassified(conn: sqlite3.Connection, api_key: str) -> int:
 
 def backfill_article_content(conn: sqlite3.Connection) -> int:
     """Fetch full content for older articles not in the current RSS window."""
-    items = get_content_needing_fetch(conn, limit=5)
+    items = get_content_needing_fetch(conn, limit=BACKFILL_BATCH)
     fetched = 0
-    for item in items:
+    for n, item in enumerate(items):
+        if n:
+            # Medium rate-limits back-to-back requests with a 403, which is why most
+            # backfills failed partway through the batch. Pace them.
+            time.sleep(FETCH_DELAY_SECONDS)
         text = _fetch_article_text(item["url"])
         if text:
             conn.execute(
@@ -252,9 +261,10 @@ def backfill_article_content(conn: sqlite3.Connection) -> int:
             )
             fetched += 1
         else:
-            # Mark as attempted so we don't retry on every run
+            # Count the attempt rather than giving up outright — get_content_needing_fetch
+            # stops offering the row after MAX_FETCH_ATTEMPTS, so transient failures retry.
             conn.execute(
-                "UPDATE content SET full_content_fetched = 1 WHERE id = ?",
+                "UPDATE content SET fetch_attempts = COALESCE(fetch_attempts, 0) + 1 WHERE id = ?",
                 (item["id"],),
             )
     return fetched

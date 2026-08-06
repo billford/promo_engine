@@ -8,6 +8,7 @@ import anthropic
 
 from config import CLAUDE_MODEL, COOLDOWN_DAYS, RECENT_SELECTION_DAYS
 from db import (
+    canonical_content_id,
     get_eligible_content,
     get_oldest_content_by_platform,
     get_recent_post_history,
@@ -80,20 +81,15 @@ def _build_catalog_text(items: list[dict], recent_history: list[dict]) -> str:
 
 
 def _resolve_eligible_items(conn: sqlite3.Connection, active_platforms: list[str]) -> list[dict]:
-    eligible_sets = [
-        {i["id"]: i for i in get_eligible_content(conn, p, COOLDOWN_DAYS)}
-        for p in active_platforms
-    ]
-    eligible_ids = set(eligible_sets[0].keys())
-    for s in eligible_sets[1:]:
-        eligible_ids &= s.keys()
-
-    merged = {**eligible_sets[0]}
-    for s in eligible_sets[1:]:
-        merged.update(s)
+    # Eligible on every requested platform. main.py drives one platform per call, but
+    # the intersection keeps a combined call honest rather than quietly using platform one.
+    eligible = {i["id"]: i for i in get_eligible_content(conn, active_platforms[0], COOLDOWN_DAYS)}
+    for platform in active_platforms[1:]:
+        still_ok = {i["id"] for i in get_eligible_content(conn, platform, COOLDOWN_DAYS)}
+        eligible = {k: v for k, v in eligible.items() if k in still_ok}
 
     recently_selected = get_recently_selected_ids(conn, days=RECENT_SELECTION_DAYS)
-    items = [v for k, v in merged.items() if k in eligible_ids and k not in recently_selected]
+    items = [v for k, v in eligible.items() if k not in recently_selected]
 
     if "linkedin" in active_platforms:
         filtered = [i for i in items if _is_linkedin_appropriate(i)]
@@ -172,13 +168,39 @@ def pick_content(
             raise RuntimeError(f"Scorer returned non-JSON response:\n{raw}") from None
         result = json.loads(match.group())
 
-    required = {"content_id", "title", "url", "source", "rationale"}
-    if not required.issubset(result.keys()):
-        raise RuntimeError(f"Scorer response missing keys: {required - result.keys()}")
+    if "content_id" not in result:
+        raise RuntimeError("Scorer response missing 'content_id'.")
 
-    original = next((i for i in eligible_items if i["id"] == result["content_id"]), None)
-    if original is not None:
-        result["description"] = original.get("description", "")
-        result["content_type"] = original.get("content_type")
+    original = _match_catalog_item(eligible_items, result["content_id"])
+    if original is None:
+        raise RuntimeError(
+            f"Scorer returned content_id {result['content_id']!r}, which is not in the "
+            f"catalog of {len(eligible_items)} eligible item(s). Refusing to post."
+        )
 
-    return result
+    # Everything the poster touches comes from the database row. The model's job is to
+    # choose an id; its transcription of a 95-character URL is not trustworthy, and a
+    # garbled one previously meant posting a dead link and recording a history row that
+    # no cooldown check could ever match.
+    return {
+        "content_id": original["id"],
+        "title": original["title"],
+        "url": original["url"],
+        "source": original["source"],
+        "description": original.get("description") or "",
+        "content_type": original.get("content_type"),
+        "rationale": str(result.get("rationale", "")),
+    }
+
+
+def _match_catalog_item(items: list[dict], content_id: str) -> dict | None:
+    """Resolve the scorer's chosen id against the catalog, tolerating URL variants."""
+    by_id = {i["id"]: i for i in items}
+    if content_id in by_id:
+        return by_id[content_id]
+
+    canonical = canonical_content_id(content_id)
+    if canonical in by_id:
+        return by_id[canonical]
+
+    return None

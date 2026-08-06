@@ -213,6 +213,37 @@ The 5-minute gap gives Publora time to publish the scheduled post before the com
 
 ---
 
+## Health checks and exit codes
+
+`main.py` runs a set of invariant checks after every run (`health.py`) and prints any
+problem to stderr prefixed with `HEALTH:`. **The process exits non-zero if any check
+fails or any platform errored**, so `run_with_retry.sh` and launchd surface it instead
+of the run looking successful.
+
+Checks: orphaned `post_history` rows, non-canonical content ids, the same article
+posted to a platform twice inside `COOLDOWN_DAYS`, unclassified articles, articles that
+exhausted their content-fetch retries, and LinkedIn first comments overdue by 48h.
+
+The cooldown check is scoped to history written after the `health_baseline` row in
+`schema_meta`, which is stamped the first time the current schema initialises. History
+from before that point contains known duplicates and is deliberately ignored.
+
+Because a failing check now exits non-zero, `run_with_retry.sh` will retry the whole
+invocation up to 5 times. Health problems are usually persistent, so expect the retries
+to burn through quickly and the job to end non-zero — that is the intended signal.
+
+## Repeat suppression
+
+Three independent mechanisms, all keyed on the **canonical** content id (`medium:<hash>`
+or `youtube:<id>`) rather than the feed URL, because Medium serves one article under
+several hosts and the raw link made one article look like several:
+
+1. `COOLDOWN_DAYS` (30) — per platform, excludes anything posted within the window.
+2. `RECENT_SELECTION_DAYS` (14) — a hard floor applied on every path, including the
+   cooldown-exhausted fallback, and counting dry runs.
+3. The scorer's chosen id must resolve to a real catalog row; an unrecognised id
+   aborts that platform rather than posting a model-invented URL.
+
 ## Known limitations
 
 **Scoring is heuristic.** Claude picks based on defined criteria. If selections feel off, adjust the `SCORING_SYSTEM_PROMPT` in `scorer.py`.
@@ -240,6 +271,7 @@ promo_engine/
 ├── scorer.py                      # Claude API: picks today's winner
 ├── writer.py                      # Claude API: writes platform posts
 ├── publora.py                     # Publora API: schedules posts
+├── health.py                      # Post-run invariant checks
 ├── db.py                          # SQLite state management
 ├── config.py                      # Loads .env, constants
 ├── tools/

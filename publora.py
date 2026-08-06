@@ -2,11 +2,36 @@ import subprocess  # nosec B404 - used only for osascript macOS system calls
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
 import requests
 
 from config import POST_HOUR, PUBLORA_BASE_URL
+from db import get_due_pending_comments, get_latest_scheduled_for, insert_pending_comment, mark_comment_done
+
+
+class PostStatus(NamedTuple):
+    """Publora's view of a scheduled post. `error` is always a string or None."""
+    status: str
+    urn: str | None
+    error: str | None
+
+
+class ScheduledPost(NamedTuple):
+    """Result of scheduling one post — replaces a dict that smuggled a nested
+    dict under a magic '_scheduled_times' key the caller had to pop()."""
+    publora_post_id: str | None
+    scheduled_for: str
+
+
+def _stringify_error(value) -> str:
+    """Publora returns errors as a string, a dict, or nothing. Normalize at the boundary."""
+    if value is None:
+        return "no error detail returned by Publora"
+    if isinstance(value, dict):
+        return str(value.get("message") or value.get("code") or value)
+    return str(value)
 
 
 def _get_scheduled_times(api_key: str, platform: str) -> set[str]:
@@ -42,7 +67,6 @@ def _get_scheduled_times(api_key: str, platform: str) -> set[str]:
 
 def _next_scheduled_time(conn, platform: str, local_tz: str, api_key: str) -> str:
     """Return the next unoccupied 9 AM slot for the given platform as a UTC ISO string."""
-    from db import get_latest_scheduled_for
     tz = ZoneInfo(local_tz)
     now = datetime.now(tz)
     latest = get_latest_scheduled_for(conn, platform)
@@ -104,8 +128,8 @@ def _post_once(api_key: str, payload: dict):
         return None
 
 
-def _get_post_status(api_key: str, publora_post_id: str) -> dict | None:
-    """Fetch Publora's view of a scheduled post: {"status", "urn", "error"}, or None on lookup failure."""
+def _get_post_status(api_key: str, publora_post_id: str) -> PostStatus | None:
+    """Fetch Publora's view of a scheduled post, or None on lookup failure."""
     try:
         resp = requests.get(
             f"{PUBLORA_BASE_URL}/get-post/{publora_post_id}",
@@ -122,24 +146,15 @@ def _get_post_status(api_key: str, publora_post_id: str) -> dict | None:
         if status == "published":
             urn = post.get("postedId")
             if urn:
-                return {"status": status, "urn": urn, "error": None}
+                return PostStatus(status=status, urn=urn, error=None)
         elif status == "failed":
             error = (
                 post.get("error")
                 or post.get("errorMessage")
                 or post.get("failureReason")
                 or post.get("reason")
-                or "no error detail returned by Publora"
             )
-            return {"status": status, "urn": None, "error": error}
-    return None
-
-
-def _get_linkedin_urn(api_key: str, publora_post_id: str) -> str | None:
-    """Fetch the LinkedIn URN for a published post via Publora's get-post endpoint."""
-    info = _get_post_status(api_key, publora_post_id)
-    if info and info["status"] == "published":
-        return info["urn"]
+            return PostStatus(status=status, urn=None, error=_stringify_error(error))
     return None
 
 
@@ -177,12 +192,10 @@ def _notify_linkedin_comment(title: str, url: str) -> None:
         print(f"WARNING: macOS notification failed: {exc.stderr.decode().strip()}", file=sys.stderr)
 
 
-def _notify_linkedin_post_failed(title: str, error) -> None:
+def _notify_linkedin_post_failed(title: str, error: str) -> None:
     """Send a macOS notification that the LinkedIn post itself failed to publish, with Publora's reason."""
-    if isinstance(error, dict):
-        error = error.get("message") or error.get("code") or str(error)
     safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
-    safe_error = str(error).replace("\\", "\\\\").replace('"', '\\"')
+    safe_error = error.replace("\\", "\\\\").replace('"', '\\"')
     script = (
         f'display notification "{safe_error}" '
         f'with title "LinkedIn post failed to publish" '
@@ -196,7 +209,6 @@ def _notify_linkedin_post_failed(title: str, error) -> None:
 
 def process_pending_comments(conn, config: dict) -> None:
     """Post first comments for any LinkedIn posts that have gone live since last run."""
-    from db import get_due_pending_comments, mark_comment_done
     api_key = config["publora_api_key"]
     due = get_due_pending_comments(conn)
     for row in due:
@@ -214,15 +226,15 @@ def process_pending_comments(conn, config: dict) -> None:
 
         info = _get_post_status(api_key, row["publora_post_id"])
 
-        if info and info["status"] == "failed":
+        if info and info.status == "failed":
             title = row["content_title"] or "a recent post"
-            print(f"WARNING: LinkedIn post failed to publish for '{title}': {info['error']}", file=sys.stderr)
-            _notify_linkedin_post_failed(title, info["error"])
+            print(f"WARNING: LinkedIn post failed to publish for '{title}': {info.error}", file=sys.stderr)
+            _notify_linkedin_post_failed(title, info.error or "unknown error")
             mark_comment_done(conn, row["id"])
             conn.commit()
             continue
 
-        urn = info["urn"] if info and info["status"] == "published" else None
+        urn = info.urn if info and info.status == "published" else None
         if urn:
             posted = _post_linkedin_comment(api_key, row["platform_account_id"], urn, row["content_url"])
             if posted:
@@ -267,13 +279,11 @@ def run_publora(
     conn=None,
     content_url: str | None = None,
     content_title: str | None = None,
-) -> dict[str, str]:
-    """Schedule posts via Publora. Returns {platform: publora_post_id}."""
-    from db import insert_pending_comment
+) -> dict[str, ScheduledPost]:
+    """Schedule posts via Publora. Returns {platform: ScheduledPost}."""
     api_key = config["publora_api_key"]
     accounts = _get_accounts(api_key)
-    result = {}
-    scheduled_times = {}
+    result: dict[str, ScheduledPost] = {}
 
     for platform in platforms:
         account_id = accounts.get(platform)
@@ -287,13 +297,11 @@ def run_publora(
         post_text = posts[platform]
         data = schedule_post(api_key, account_id, post_text, scheduled_time)
         publora_id = data.get("postGroupId") or None
-        result[platform] = publora_id
-        scheduled_times[platform] = scheduled_time
+        result[platform] = ScheduledPost(publora_post_id=publora_id, scheduled_for=scheduled_time)
         print(f"Scheduled {platform} post (Publora ID: {publora_id}) for {scheduled_time}")
 
         if platform == "linkedin" and content_url and conn is not None and publora_id:
             insert_pending_comment(conn, publora_id, account_id, content_url, content_title, scheduled_time)
             print("Queued LinkedIn first comment for after post goes live.")
 
-    result["_scheduled_times"] = scheduled_times
     return result

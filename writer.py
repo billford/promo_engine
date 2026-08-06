@@ -79,78 +79,69 @@ Requirements:
 """
 
 
+BLUESKY_LIMIT = 300  # Bluesky's actual ceiling; the prompt asks for 280 to leave headroom
+
+
 def _enforce_bluesky_limit(text: str, url: str) -> str:
-    if len(text) <= 280:
+    if len(text) <= BLUESKY_LIMIT:
         return text
 
     url_pos = text.find(url)
     if url_pos == -1:
-        return text[:277] + "..."
+        return text[:BLUESKY_LIMIT - 3] + "..."
 
     suffix = text[url_pos:]
-    available = 280 - len(suffix) - 1  # -1 for the space before suffix
+    available = BLUESKY_LIMIT - len(suffix) - 1  # -1 for the space before suffix
     if available <= 3:
-        return suffix[:280]
+        return suffix[:BLUESKY_LIMIT]
 
     truncated = text[:available - 3].rstrip() + "..."
     return truncated + " " + suffix
 
 
-def write_posts(content: dict, config: dict) -> dict:
+_PROMPT_TEMPLATES = {
+    "linkedin": LINKEDIN_PROMPT_TEMPLATE,
+    "bluesky": BLUESKY_PROMPT_TEMPLATE,
+    "facebook": FACEBOOK_PROMPT_TEMPLATE,
+}
+
+
+def write_post(content: dict, config: dict, platform: str) -> str:
+    """Draft the post for one platform.
+
+    Deliberately per-platform: the caller picks a different article for each platform,
+    so drafting all three together produced two drafts about the wrong article and
+    tripled the writer's API calls.
+    """
+    template = _PROMPT_TEMPLATES.get(platform)
+    if template is None:
+        raise RuntimeError(f"No post template for platform {platform!r}.")
+
     client = anthropic.Anthropic(api_key=config["anthropic_api_key"])
-
-    shared_system = [
-        {
-            "type": "text",
-            "text": VOICE_CONTEXT,
-            "cache_control": {"type": "ephemeral"},
-        }
-    ]
-
-    description = content.get("description", "")[:2500]
-
-    def call_claude(prompt: str) -> str:
-        response = client.messages.create(
-            model=CLAUDE_MODEL,
-            max_tokens=1024,
-            system=shared_system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.content[0].text.strip()
-
-    linkedin_prompt = LINKEDIN_PROMPT_TEMPLATE.format(
-        title=content["title"],
-        source=content["source"],
-        description=description,
-    )
-    linkedin_post = call_claude(linkedin_prompt)
-
-    bluesky_prompt = BLUESKY_PROMPT_TEMPLATE.format(
+    prompt = template.format(
         title=content["title"],
         source=content["source"],
         url=content["url"],
-        description=description,
+        description=(content.get("description") or "")[:2500],
     )
-    bluesky_post = call_claude(bluesky_prompt)
 
-    # Enforce Bluesky character limit in code
-    bluesky_post = _enforce_bluesky_limit(bluesky_post, content["url"])
-
-    # Ensure #AIPromoted is present
-    if "#AIPromoted" not in bluesky_post:
-        candidate = bluesky_post.rstrip() + " #AIPromoted"
-        bluesky_post = _enforce_bluesky_limit(candidate, content["url"])
-
-    facebook_prompt = FACEBOOK_PROMPT_TEMPLATE.format(
-        title=content["title"],
-        source=content["source"],
-        url=content["url"],
-        description=description,
+    response = client.messages.create(
+        model=CLAUDE_MODEL,
+        max_tokens=1024,
+        system=[
+            {
+                "type": "text",
+                "text": VOICE_CONTEXT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        messages=[{"role": "user", "content": prompt}],
     )
-    facebook_post = call_claude(facebook_prompt)
+    text = response.content[0].text.strip()
 
-    return {
-        "linkedin": linkedin_post,
-        "bluesky": bluesky_post,
-        "facebook": facebook_post,
-    }
+    if platform == "bluesky":
+        text = _enforce_bluesky_limit(text, content["url"])
+        if "#AIPromoted" not in text:
+            text = _enforce_bluesky_limit(text.rstrip() + " #AIPromoted", content["url"])
+
+    return text

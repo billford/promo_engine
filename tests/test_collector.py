@@ -103,3 +103,20 @@ def test_classify_unclassified_skips_invalid_type(mock_cls, db_path):
 
 def test_classify_prompt_has_required_placeholder():
     assert "{catalog}" in _CLASSIFY_PROMPT
+
+
+@patch("collector.requests.get", side_effect=Exception("network down"))
+def test_backfill_retries_after_transient_failure(_mock_get, db_path):
+    """A failed fetch must not permanently lock an article to its RSS snippet."""
+    from db import MAX_FETCH_ATTEMPTS, get_content_needing_fetch
+    from collector import backfill_article_content
+
+    with get_conn(db_path) as conn:
+        upsert_content(conn, _sample_item("https://billfordx.medium.com/a-155c27d86f7f"))
+
+        for _ in range(MAX_FETCH_ATTEMPTS - 1):
+            backfill_article_content(conn)
+            assert get_content_needing_fetch(conn), "should still be retryable"
+
+        backfill_article_content(conn)
+        assert not get_content_needing_fetch(conn), "should stop after the attempt limit"

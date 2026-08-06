@@ -35,15 +35,13 @@ def test_url_facets_multiple_urls():
     assert uris == {"https://one.com", "https://two.com"}
 
 
-def test_post_to_bluesky_missing_handle_exits(monkeypatch):
-    monkeypatch.setattr("sys.exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
-    with pytest.raises(SystemExit):
+def test_post_to_bluesky_missing_handle_raises():
+    with pytest.raises(RuntimeError):
         post_to_bluesky("text", {"bluesky_handle": None, "bluesky_app_password": None})
 
 
-def test_post_to_bluesky_missing_password_exits(monkeypatch):
-    monkeypatch.setattr("sys.exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
-    with pytest.raises(SystemExit):
+def test_post_to_bluesky_missing_password_raises():
+    with pytest.raises(RuntimeError):
         post_to_bluesky("text", {"bluesky_handle": "user.bsky.social", "bluesky_app_password": None})
 
 
@@ -63,11 +61,10 @@ def test_post_to_bluesky_success(mock_post):
 
 
 @patch("bluesky.requests.post")
-def test_post_to_bluesky_login_failure_exits(mock_post, monkeypatch):
-    monkeypatch.setattr("sys.exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+def test_post_to_bluesky_login_failure_raises(mock_post):
     fail_resp = MagicMock(status_code=401, text="Unauthorized")
     mock_post.return_value = fail_resp
 
     config = {"bluesky_handle": "user.bsky.social", "bluesky_app_password": "wrong"}
-    with pytest.raises(SystemExit):
+    with pytest.raises(RuntimeError):
         post_to_bluesky("Hello", config)

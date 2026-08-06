@@ -116,3 +116,66 @@ def test_pick_content_handles_json_with_preamble(mock_cls, db_path):
         result = pick_content(conn, {"anthropic_api_key": "key"}, ["linkedin"])
 
     assert result["content_id"] == "http://example.com/1"
+
+
+def _scorer_response(payload: dict) -> MagicMock:
+    return MagicMock(content=[MagicMock(text=json.dumps(payload))])
+
+
+@patch("scorer.anthropic.Anthropic")
+def test_pick_content_uses_db_fields_not_model_transcription(mock_cls, db_path):
+    """The model picks an id; every posted field must come from the database row."""
+    real_id = "https://billfordx.medium.com/real-article-155c27d86f7f?source=rss-x"
+    mock_client = MagicMock()
+    mock_cls.return_value = mock_client
+    mock_client.messages.create.return_value = _scorer_response({
+        "content_id": real_id,
+        "title": "Hallucinated Title",
+        "url": "https://example.com/wrong-link",
+        "source": "youtube",
+        "rationale": "because",
+    })
+
+    with get_conn(db_path) as conn:
+        upsert_content(conn, _sample_item(real_id))
+        selected = pick_content(conn, {"anthropic_api_key": "k"}, ["linkedin"])
+
+    assert selected["url"] == real_id          # not the model's invented link
+    assert selected["title"] == "Test Article"  # not the model's invented title
+    assert selected["source"] == "medium"
+    assert selected["content_id"] == "medium:155c27d86f7f"
+    assert selected["description"] == "Test description"
+
+
+@patch("scorer.anthropic.Anthropic")
+def test_pick_content_rejects_unknown_content_id(mock_cls, db_path):
+    """A garbled id must fail loudly, not post a dead link and poison the cooldown."""
+    mock_client = MagicMock()
+    mock_cls.return_value = mock_client
+    mock_client.messages.create.return_value = _scorer_response({
+        "content_id": "https://medium.com/@billfordx/my-wife-hates-ghost-stories-old",
+        "title": "T", "url": "u", "source": "medium", "rationale": "r",
+    })
+
+    with get_conn(db_path) as conn:
+        upsert_content(conn, _sample_item("https://billfordx.medium.com/real-155c27d86f7f"))
+        with pytest.raises(RuntimeError, match="not in the catalog"):
+            pick_content(conn, {"anthropic_api_key": "k"}, ["linkedin"])
+
+
+@patch("scorer.anthropic.Anthropic")
+def test_pick_content_tolerates_url_variant_of_chosen_id(mock_cls, db_path):
+    """A different-but-equivalent Medium URL should resolve, not fail."""
+    stored = "https://billfordx.medium.com/real-article-155c27d86f7f?source=rss-x"
+    mock_client = MagicMock()
+    mock_cls.return_value = mock_client
+    mock_client.messages.create.return_value = _scorer_response({
+        "content_id": "https://medium.com/@billfordx/real-article-155c27d86f7f",
+        "title": "T", "url": "u", "source": "medium", "rationale": "r",
+    })
+
+    with get_conn(db_path) as conn:
+        upsert_content(conn, _sample_item(stored))
+        selected = pick_content(conn, {"anthropic_api_key": "k"}, ["linkedin"])
+
+    assert selected["content_id"] == "medium:155c27d86f7f"

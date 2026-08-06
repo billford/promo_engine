@@ -65,9 +65,8 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
     if args.verbose:
         print(f"Rationale: {selected['rationale']}")
 
-    from writer import write_posts
-    posts = write_posts(selected, config)
-    post_text = posts[platform]
+    from writer import write_post
+    post_text = write_post(selected, config, platform)
 
     if args.dry_run or args.verbose:
         label = "FACEBOOK (Reminder)" if platform == "facebook" else platform.upper()
@@ -101,22 +100,21 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
             print("ERROR: PUBLORA_API_KEY required for LinkedIn posting.", file=sys.stderr)
             sys.exit(1)
         from publora import run_publora
-        publora_ids = run_publora(
+        scheduled = run_publora(
             {platform: post_text},
             config,
             [platform],
             conn=conn,
             content_url=selected["url"],
             content_title=selected["title"],
-        )
-        scheduled_times = publora_ids.pop("_scheduled_times", {})
+        )[platform]
         insert_post_record(
             conn,
             content_id=selected["content_id"],
             platform=platform,
             post_text=post_text,
-            publora_post_id=publora_ids.get(platform),
-            scheduled_for=scheduled_times.get(platform),
+            publora_post_id=scheduled.publora_post_id,
+            scheduled_for=scheduled.scheduled_for,
         )
 
     elif platform == "bluesky":
@@ -165,18 +163,35 @@ def main():
             run_collector(conn, config)
         else:
             print("Skipping catalog refresh (--skip-collect).")
+        conn.commit()  # bank the catalog refresh before any platform can roll back
 
+        failures = []
         for platform in platforms:
             try:
                 run_platform(platform, conn, config, args)
                 conn.commit()
-            except RuntimeError as exc:
-                print(f"ERROR [{platform}]: {exc}", file=sys.stderr)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                # One platform must never take down the others, so catch broadly rather
+                # than only RuntimeError. Platform modules raise RuntimeError instead of
+                # calling sys.exit precisely because SystemExit would bypass this.
+                conn.rollback()
+                failures.append(platform)
+                print(f"ERROR [{platform}]: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+        from health import run_health_checks
+        problems = run_health_checks(conn)
+        for problem in problems:
+            print(f"HEALTH: {problem}", file=sys.stderr)
 
     if args.dry_run:
         print("\nDry run complete. Records logged to DB with dry_run=1.")
     else:
         print("\nDone.")
+
+    if failures or problems:
+        if failures:
+            print(f"Failed platform(s): {', '.join(failures)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

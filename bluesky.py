@@ -1,5 +1,4 @@
 import re
-import sys
 from datetime import datetime, timezone
 
 import requests
@@ -14,8 +13,7 @@ def _create_session(handle: str, password: str) -> tuple[str, str]:
         timeout=15,
     )
     if resp.status_code != 200:
-        print(f"ERROR: Bluesky login failed ({resp.status_code}): {resp.text}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Bluesky login failed ({resp.status_code}): {resp.text}")
     data = resp.json()
     return data["accessJwt"], data["did"]
 
@@ -38,11 +36,9 @@ def post_to_bluesky(text: str, config: dict) -> str | None:
     handle = config.get("bluesky_handle")
     password = config.get("bluesky_app_password")
     if not handle or not password:
-        print(
-            "ERROR: BLUESKY_HANDLE and BLUESKY_APP_PASSWORD must be set for Bluesky posting.",
-            file=sys.stderr,
+        raise RuntimeError(
+            "BLUESKY_HANDLE and BLUESKY_APP_PASSWORD must be set for Bluesky posting."
         )
-        sys.exit(1)
 
     access_jwt, did = _create_session(handle, password)
 
@@ -62,8 +58,7 @@ def post_to_bluesky(text: str, config: dict) -> str | None:
         timeout=15,
     )
     if resp.status_code != 200:
-        print(f"ERROR: Bluesky post failed ({resp.status_code}): {resp.text}", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError(f"Bluesky post failed ({resp.status_code}): {resp.text}")
 
     uri = resp.json().get("uri")
     print(f"Posted to Bluesky: {uri}")
