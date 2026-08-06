@@ -11,6 +11,9 @@ MEDIUM_RSS_URL = "https://medium.com/feed/@billfordx"
 YOUTUBE_CHANNEL_HANDLE = "@billfordx"
 PUBLORA_BASE_URL = "https://api.publora.com/api/v1"
 COOLDOWN_DAYS = 30
+# Hard floor on re-selecting the same article, applied even on the cooldown-exhausted
+# fallback path. Counts dry runs so testing doesn't leak repeats into live posting.
+RECENT_SELECTION_DAYS = 14
 POST_HOUR = 9
 
 

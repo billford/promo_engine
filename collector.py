@@ -175,20 +175,24 @@ Classify each article as 'business' or 'personal'.
 business = professional, tech, AI, cybersecurity, career, leadership, productivity
 personal = opinion, personal story, humor, pop culture, lifestyle, general commentary
 
-Return a JSON array of {{"id": "...", "type": "business" or "personal"}} — no other text.
+Return a JSON array of {{"n": <number>, "type": "business" or "personal"}} — no other text.
 
-Articles (pipe-delimited: id|title|description):
+Articles (pipe-delimited: n|title|description):
 {catalog}"""
+
+_CLASSIFY_BATCH = 40
 
 
 def classify_unclassified(conn: sqlite3.Connection, api_key: str) -> int:
-    items = get_unclassified_content(conn)
+    items = get_unclassified_content(conn)[:_CLASSIFY_BATCH]
     if not items:
         return 0
 
+    # Reference articles by batch index, not by id: ids are full Medium URLs, and echoing
+    # 60 of them back blew past max_tokens, truncating the JSON so nothing ever parsed.
     catalog = "\n".join(
-        f"{item['id']}|{item['title']}|{(item.get('description') or '')[:200]}"
-        for item in items[:60]
+        f"{n}|{item['title']}|{(item.get('description') or '')[:200]}"
+        for n, item in enumerate(items)
     )
 
     client = anthropic.Anthropic(api_key=api_key)
@@ -202,6 +206,9 @@ def classify_unclassified(conn: sqlite3.Connection, api_key: str) -> int:
         print(f"WARNING: Content classification failed: {exc}", file=sys.stderr)
         return 0
 
+    if response.stop_reason == "max_tokens":
+        print("WARNING: Classifier response hit max_tokens — results truncated.", file=sys.stderr)
+
     raw = response.content[0].text.strip()
     try:
         results = json.loads(raw)
@@ -210,16 +217,24 @@ def classify_unclassified(conn: sqlite3.Connection, api_key: str) -> int:
         if not m:
             print("WARNING: Classifier returned unparseable response.", file=sys.stderr)
             return 0
-        results = json.loads(m.group())
+        try:
+            results = json.loads(m.group())
+        except json.JSONDecodeError:
+            print("WARNING: Classifier returned malformed JSON array.", file=sys.stderr)
+            return 0
 
     count = 0
-    for item in results:
-        if item.get("type") in ("business", "personal"):
-            conn.execute(
-                "UPDATE content SET content_type = ? WHERE id = ?",
-                (item["type"], item["id"]),
-            )
-            count += 1
+    for entry in results:
+        index, ctype = entry.get("n"), entry.get("type")
+        if ctype not in ("business", "personal") or not isinstance(index, int):
+            continue
+        if not 0 <= index < len(items):
+            continue
+        cursor = conn.execute(
+            "UPDATE content SET content_type = ? WHERE id = ?",
+            (ctype, items[index]["id"]),
+        )
+        count += cursor.rowcount  # count real updates, not just parsed rows
 
     return count
 

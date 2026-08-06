@@ -13,7 +13,66 @@ from db import (
     get_due_pending_comments,
     mark_comment_done,
     insert_post_record,
+    canonical_content_id,
 )
+
+
+MEDIUM_VARIANTS = [
+    "https://billfordx.medium.com/help-ai-deleted-my-company-155c27d86f7f?source=rss-1384bc4a7965------2",
+    "https://medium.com/@billfordx/help-ai-deleted-my-company-155c27d86f7f",
+    "https://medium.com/new-literary-society/help-ai-deleted-my-company-155c27d86f7f",
+    "https://radiohackers.com/help-ai-deleted-my-company-155c27d86f7f?source=rss-1384bc4a7965------2",
+]
+
+
+@pytest.mark.parametrize("url", MEDIUM_VARIANTS)
+def test_medium_url_variants_share_one_canonical_id(url):
+    assert canonical_content_id(url, "medium") == "medium:155c27d86f7f"
+
+
+def test_youtube_ids_canonicalize():
+    assert canonical_content_id("dQw4w9WgXcQ", "youtube") == "youtube:dQw4w9WgXcQ"
+    assert canonical_content_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ") == "youtube:dQw4w9WgXcQ"
+
+
+def test_canonical_id_is_idempotent():
+    once = canonical_content_id(MEDIUM_VARIANTS[0], "medium")
+    assert canonical_content_id(once, "medium") == once
+
+
+def test_url_variants_collapse_to_one_catalog_row(db_path):
+    """The repeat bug: one article ingested under several URLs became several rows."""
+    with get_conn(db_path) as conn:
+        for url in MEDIUM_VARIANTS:
+            upsert_content(conn, {
+                "id": url,
+                "source": "medium",
+                "title": "Help, AI Deleted My Company",
+                "url": url,
+                "published_date": "2026-04-30T18:23:31+00:00",
+                "description": "d",
+                "tags": [],
+            })
+        assert len(get_all_content(conn)) == 1
+
+
+def test_cooldown_covers_every_url_variant(db_path):
+    """Posting via one URL variant must put the article on cooldown for all of them."""
+    with get_conn(db_path) as conn:
+        for url in MEDIUM_VARIANTS:
+            upsert_content(conn, {
+                "id": url, "source": "medium", "title": "T", "url": url,
+                "published_date": "2026-04-30T18:23:31+00:00", "description": "d", "tags": [],
+            })
+        insert_post_record(
+            conn,
+            content_id=canonical_content_id(MEDIUM_VARIANTS[0], "medium"),
+            platform="linkedin",
+            post_text="x",
+        )
+
+        assert get_eligible_content(conn, "linkedin", 30) == []
+        assert get_recently_selected_ids(conn, days=14) == {"medium:155c27d86f7f"}
 
 
 @pytest.fixture()

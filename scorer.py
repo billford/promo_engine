@@ -6,7 +6,7 @@ from datetime import date
 
 import anthropic
 
-from config import CLAUDE_MODEL, COOLDOWN_DAYS
+from config import CLAUDE_MODEL, COOLDOWN_DAYS, RECENT_SELECTION_DAYS
 from db import (
     get_eligible_content,
     get_oldest_content_by_platform,
@@ -92,7 +92,7 @@ def _resolve_eligible_items(conn: sqlite3.Connection, active_platforms: list[str
     for s in eligible_sets[1:]:
         merged.update(s)
 
-    recently_selected = get_recently_selected_ids(conn, days=7)
+    recently_selected = get_recently_selected_ids(conn, days=RECENT_SELECTION_DAYS)
     items = [v for k, v in merged.items() if k in eligible_ids and k not in recently_selected]
 
     if "linkedin" in active_platforms:
@@ -106,7 +106,18 @@ def _resolve_eligible_items(conn: sqlite3.Connection, active_platforms: list[str
         return items
 
     print("NOTE: All content within cooldown window. Resetting to oldest items.", file=sys.stderr)
-    return get_oldest_content_by_platform(conn, active_platforms[0])[:20]
+    fallback = get_oldest_content_by_platform(conn, active_platforms[0])
+    # The fallback pool is ordered by last-posted, so without this filter it hands the
+    # scorer the same handful of articles on consecutive days.
+    fresh = [i for i in fallback if i["id"] not in recently_selected]
+    if not fresh:
+        print(
+            "NOTE: Entire fallback pool was posted in the last "
+            f"{RECENT_SELECTION_DAYS} days — allowing a repeat.",
+            file=sys.stderr,
+        )
+        fresh = fallback
+    return fresh[:20]
 
 
 def _is_linkedin_appropriate(item: dict) -> bool:

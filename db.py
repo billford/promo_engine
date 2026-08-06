@@ -1,7 +1,40 @@
 import sqlite3
 import json
+import re
 from datetime import datetime, timezone
 from contextlib import contextmanager
+
+
+_YOUTUBE_URL_RE = re.compile(r"(?:youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})")
+_YOUTUBE_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
+_MEDIUM_HASH_RE = re.compile(r"-([0-9a-f]{12})$")
+
+
+def canonical_content_id(raw_id: str, source: str | None = None) -> str:
+    """Stable identity for one piece of content, independent of URL variant.
+
+    Medium serves the same article under several hosts — billfordx.medium.com,
+    medium.com/@billfordx, publication paths, and custom domains — with or
+    without a ?source=rss- tracking param. Keying content on the raw feed link
+    therefore created several rows per article, and every cooldown and
+    repeat-suppression check silently treated them as different articles.
+    The trailing hex hash in the slug is the only stable part, so key on that.
+    """
+    value = (raw_id or "").strip()
+    if not value or value.startswith(("medium:", "youtube:")):
+        return value
+
+    match = _YOUTUBE_URL_RE.search(value)
+    if match:
+        return f"youtube:{match.group(1)}"
+    if source == "youtube" or ("/" not in value and _YOUTUBE_ID_RE.fullmatch(value)):
+        return f"youtube:{value}"
+
+    path = value.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    match = _MEDIUM_HASH_RE.search(path.rsplit("/", 1)[-1])
+    if match:
+        return f"medium:{match.group(1)}"
+    return path
 
 
 SCHEMA = """
@@ -39,7 +72,93 @@ CREATE TABLE IF NOT EXISTS pending_comments (
     done INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS schema_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
+
+
+def _best_url(urls: list[str]) -> str:
+    """Prefer a medium.com host, then the shortest (drops ?source= tracking params)."""
+    candidates = [u for u in urls if u] or [""]
+    return min(candidates, key=lambda u: (0 if "medium.com" in u else 1, len(u)))
+
+
+def _merge_duplicate_content(conn: sqlite3.Connection) -> int:
+    """Collapse rows that are the same article under different URLs onto one canonical id."""
+    groups: dict[str, list[dict]] = {}
+    for row in conn.execute("SELECT * FROM content").fetchall():
+        item = dict(row)
+        groups.setdefault(canonical_content_id(item["id"], item.get("source")), []).append(item)
+
+    merged = 0
+    for canonical, rows in groups.items():
+        if len(rows) == 1 and rows[0]["id"] == canonical:
+            continue
+        if len(rows) > 1:
+            merged += len(rows) - 1
+
+        def _first(field, rows=rows):
+            return next((r[field] for r in rows if r.get(field)), None)
+
+        best = {
+            "id": canonical,
+            "source": _first("source"),
+            "title": _first("title"),
+            "url": _best_url([r.get("url") or r["id"] for r in rows]),
+            "published_date": _first("published_date"),
+            "description": max((r.get("description") or "" for r in rows), key=len),
+            "tags": max((r.get("tags") or "[]" for r in rows), key=len),
+            "fetched_at": max((r.get("fetched_at") or "" for r in rows)),
+            "content_type": _first("content_type"),
+            "full_content_fetched": max((r.get("full_content_fetched") or 0) for r in rows),
+        }
+
+        conn.executemany("DELETE FROM content WHERE id = ?", [(r["id"],) for r in rows])
+        conn.execute(
+            """
+            INSERT INTO content
+                (id, source, title, url, published_date, description, tags, fetched_at,
+                 content_type, full_content_fetched)
+            VALUES
+                (:id, :source, :title, :url, :published_date, :description, :tags, :fetched_at,
+                 :content_type, :full_content_fetched)
+            """,
+            best,
+        )
+    return merged
+
+
+def _migrate_canonical_ids(conn: sqlite3.Connection) -> None:
+    """One-time remap of content ids and post history onto canonical article ids."""
+    applied = conn.execute(
+        "SELECT value FROM schema_meta WHERE key = 'canonical_ids'"
+    ).fetchone()
+    if applied:
+        return
+
+    merged = _merge_duplicate_content(conn)
+
+    remapped = 0
+    for row in conn.execute("SELECT DISTINCT content_id FROM post_history").fetchall():
+        old = row["content_id"]
+        new = canonical_content_id(old)
+        if new != old:
+            conn.execute(
+                "UPDATE post_history SET content_id = ? WHERE content_id = ?", (new, old)
+            )
+            remapped += 1
+
+    conn.execute(
+        "INSERT INTO schema_meta (key, value) VALUES ('canonical_ids', ?)",
+        (datetime.now(timezone.utc).isoformat(),),
+    )
+    print(
+        f"Migration: merged {merged} duplicate content row(s), "
+        f"remapped {remapped} post-history id(s) onto canonical article ids."
+    )
 
 
 @contextmanager
@@ -65,12 +184,14 @@ def init_db(db_path: str) -> None:
                 conn.execute(alter)
             except sqlite3.OperationalError:
                 pass  # column already exists
+        _migrate_canonical_ids(conn)
 
 
 def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
     now = datetime.now(timezone.utc).isoformat()
     params = {
         **item,
+        "id": canonical_content_id(item["id"], item.get("source")),
         "tags": json.dumps(item.get("tags", [])),
         "fetched_at": now,
         "content_type": item.get("content_type"),
@@ -91,6 +212,7 @@ def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
             full_content_fetched = CASE
                 WHEN length(excluded.description) > length(content.description)
                 THEN excluded.full_content_fetched ELSE content.full_content_fetched END,
+            title = CASE WHEN excluded.title != '' THEN excluded.title ELSE content.title END,
             fetched_at = excluded.fetched_at
         """,
         params,
@@ -155,8 +277,14 @@ def get_eligible_content(conn: sqlite3.Connection, platform: str, cooldown_days:
     return result
 
 
-def get_oldest_content_by_platform(conn: sqlite3.Connection, platform: str) -> list[dict]:
-    """Fallback: content ordered by last-posted date ascending (oldest first)."""
+def get_oldest_content_by_platform(
+    conn: sqlite3.Connection, platform: str, limit: int = 60
+) -> list[dict]:
+    """Fallback: content ordered by last-posted date ascending (oldest first).
+
+    Deliberately over-fetches so the caller can drop recently-selected items and
+    still have a usable pool.
+    """
     rows = conn.execute(
         """
         SELECT c.*, MAX(ph.posted_at) AS last_posted
@@ -165,9 +293,9 @@ def get_oldest_content_by_platform(conn: sqlite3.Connection, platform: str) -> l
             ON ph.content_id = c.id AND ph.platform = ? AND ph.dry_run = 0
         GROUP BY c.id
         ORDER BY last_posted ASC NULLS FIRST
-        LIMIT 20
+        LIMIT ?
         """,
-        (platform,),
+        (platform, limit),
     ).fetchall()
 
     result = []

@@ -37,8 +37,8 @@ def test_classify_unclassified_classifies_items(mock_cls, db_path):
     mock_client.messages.create.return_value = MagicMock(
         content=[MagicMock(
             text=json.dumps([
-                {"id": "http://example.com/1", "type": "business"},
-                {"id": "http://example.com/2", "type": "personal"},
+                {"n": 0, "type": "business"},
+                {"n": 1, "type": "personal"},
             ])
         )]
     )
@@ -57,7 +57,7 @@ def test_classify_unclassified_classifies_items(mock_cls, db_path):
 def test_classify_unclassified_handles_json_in_markdown(mock_cls, db_path):
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
-    wrapped = '```json\n[{"id": "http://example.com/1", "type": "business"}]\n```'
+    wrapped = '```json\n[{"n": 0, "type": "business"}]\n```'
     mock_client.messages.create.return_value = MagicMock(
         content=[MagicMock(text=wrapped)]
     )
