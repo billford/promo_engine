@@ -37,6 +37,53 @@ def canonical_content_id(raw_id: str, source: str | None = None) -> str:
     return path
 
 
+_HEADLINE_WORD_RE = re.compile(r"[A-Za-z][A-Za-z']*")
+
+# Long replies whose length puts them past the article threshold but which are plainly
+# responses. Identified by inspection; the heuristic below cannot separate these from a
+# short article without also discarding real ones.
+_KNOWN_RESPONSE_IDS = frozenset({
+    "medium:07c1ad754782",
+    "medium:6729b3dd474e",
+    "medium:2a9a3267e34f",
+    "medium:191cb478e2fe",
+})
+
+ARTICLE_LENGTH_FLOOR = 800
+STUB_LENGTH_CEILING = 60
+
+
+def _looks_like_headline(title: str) -> bool:
+    """True if the title reads as a headline rather than the opening of a sentence."""
+    text = (title or "").strip()
+    if not text or text[-1] in ".!" or ". " in text:
+        return False  # '?' is common in real headlines; '.' is not
+    words = _HEADLINE_WORD_RE.findall(text)
+    if not 3 <= len(words) <= 14:
+        return False
+    return sum(1 for w in words if w[0].isupper()) / len(words) >= 0.6
+
+
+def classify_content_kind(content_id: str, title: str, description: str | None) -> str:
+    """'article' or 'response'.
+
+    A Medium export bundles the author's replies alongside their posts, and the archive
+    importer took everything with a canonical URL, so ~200 two-sentence comments sat in
+    the promotion pool as if they were articles. Medium gives a reply no title, so the
+    importer fell back to the page <title>, which is just the reply's opening words --
+    that is the signal used here. Tuned to never discard a real article: a handful of
+    long replies stay classified as articles rather than risk a false positive.
+    """
+    if content_id in _KNOWN_RESPONSE_IDS:
+        return "response"
+    length = len(description or "")
+    if length >= ARTICLE_LENGTH_FLOOR:
+        return "article"
+    if length < STUB_LENGTH_CEILING:
+        return "response"
+    return "article" if _looks_like_headline(title) else "response"
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS content (
     id TEXT PRIMARY KEY,
@@ -234,6 +281,7 @@ def init_db(db_path: str) -> None:
             "ALTER TABLE content ADD COLUMN content_type TEXT",
             "ALTER TABLE content ADD COLUMN full_content_fetched INTEGER DEFAULT 0",
             "ALTER TABLE content ADD COLUMN fetch_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE content ADD COLUMN content_kind TEXT DEFAULT 'article'",
         ]:
             try:
                 conn.execute(alter)
@@ -242,7 +290,24 @@ def init_db(db_path: str) -> None:
         _migrate_canonical_ids(conn)
         _migrate_orphan_history(conn)
         _migrate_retry_thin_descriptions(conn)
+        _migrate_content_kind(conn)
         _ensure_health_baseline(conn)
+
+
+def _migrate_content_kind(conn: sqlite3.Connection) -> None:
+    """Label existing rows as article or response so replies stop being promoted."""
+    if _migration_applied(conn, "content_kind"):
+        return
+
+    responses = 0
+    for row in conn.execute("SELECT id, title, description FROM content").fetchall():
+        kind = classify_content_kind(row["id"], row["title"], row["description"])
+        conn.execute("UPDATE content SET content_kind = ? WHERE id = ?", (kind, row["id"]))
+        responses += kind == "response"
+
+    _mark_migration(conn, "content_kind")
+    if responses:
+        print(f"Migration: classified {responses} catalog row(s) as Medium responses (excluded from promotion).")
 
 
 THIN_DESCRIPTION_CHARS = 400
@@ -294,9 +359,13 @@ def get_health_baseline(conn: sqlite3.Connection) -> str:
 
 def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
     now = datetime.now(timezone.utc).isoformat()
+    canonical = canonical_content_id(item["id"], item.get("source"))
     params = {
         **item,
-        "id": canonical_content_id(item["id"], item.get("source")),
+        "id": canonical,
+        "content_kind": item.get("content_kind") or classify_content_kind(
+            canonical, item.get("title", ""), item.get("description", "")
+        ),
         "tags": json.dumps(item.get("tags", [])),
         "fetched_at": now,
         "content_type": item.get("content_type"),
@@ -306,10 +375,10 @@ def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
         """
         INSERT INTO content
             (id, source, title, url, published_date, description, tags, fetched_at,
-             content_type, full_content_fetched)
+             content_type, full_content_fetched, content_kind)
         VALUES
             (:id, :source, :title, :url, :published_date, :description, :tags, :fetched_at,
-             :content_type, :full_content_fetched)
+             :content_type, :full_content_fetched, :content_kind)
         ON CONFLICT(id) DO UPDATE SET
             description = CASE
                 WHEN length(excluded.description) > length(content.description)
@@ -318,6 +387,7 @@ def upsert_content(conn: sqlite3.Connection, item: dict) -> None:
                 WHEN length(excluded.description) > length(content.description)
                 THEN excluded.full_content_fetched ELSE content.full_content_fetched END,
             title = CASE WHEN excluded.title != '' THEN excluded.title ELSE content.title END,
+            content_kind = excluded.content_kind,
             fetched_at = excluded.fetched_at
         """,
         params,
@@ -337,6 +407,7 @@ def get_content_needing_fetch(conn: sqlite3.Connection, limit: int = 5) -> list[
         """
         SELECT id, url FROM content
         WHERE source = 'medium'
+          AND COALESCE(content_kind, 'article') = 'article'
           AND full_content_fetched = 0
           AND COALESCE(fetch_attempts, 0) < ?
         ORDER BY published_date DESC
@@ -349,7 +420,9 @@ def get_content_needing_fetch(conn: sqlite3.Connection, limit: int = 5) -> list[
 
 def get_unclassified_content(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        "SELECT id, title, description FROM content WHERE content_type IS NULL ORDER BY published_date DESC"
+        """SELECT id, title, description FROM content
+        WHERE content_type IS NULL AND COALESCE(content_kind, 'article') = 'article'
+        ORDER BY published_date DESC"""
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -375,6 +448,7 @@ def get_eligible_content(conn: sqlite3.Connection, platform: str, cooldown_days:
             AND ph.platform = ?
             AND ph.dry_run = 0
             AND ph.posted_at >= datetime('now', ? || ' days')
+        WHERE COALESCE(c.content_kind, 'article') = 'article'
         GROUP BY c.id
         HAVING last_posted IS NULL
         ORDER BY c.published_date DESC
@@ -404,6 +478,7 @@ def get_oldest_content_by_platform(
         FROM content c
         LEFT JOIN post_history ph
             ON ph.content_id = c.id AND ph.platform = ? AND ph.dry_run = 0
+        WHERE COALESCE(c.content_kind, 'article') = 'article'
         GROUP BY c.id
         ORDER BY last_posted ASC NULLS FIRST
         LIMIT ?

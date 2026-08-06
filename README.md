@@ -215,22 +215,42 @@ The 5-minute gap gives Publora time to publish the scheduled post before the com
 
 ## Health checks and exit codes
 
-`main.py` runs a set of invariant checks after every run (`health.py`) and prints any
-problem to stderr prefixed with `HEALTH:`. **The process exits non-zero if any check
-fails or any platform errored**, so `run_with_retry.sh` and launchd surface it instead
-of the run looking successful.
+`main.py` runs a set of invariant checks after every run (`health.py`) and prints them
+to stderr. They come in two severities:
 
-Checks: orphaned `post_history` rows, non-canonical content ids, the same article
-posted to a platform twice inside `COOLDOWN_DAYS`, unclassified articles, articles that
-exhausted their content-fetch retries, and LinkedIn first comments overdue by 48h.
+**Errors** — `HEALTH (error):` — the repeat-suppression invariants are broken. **The
+process exits non-zero**, so `run_with_retry.sh` and launchd surface it instead of the
+run looking successful. A platform that errored also exits non-zero.
+
+- orphaned `post_history` rows (a history row pointing at no article)
+- content ids that are not canonical (duplicates will reappear)
+- the same article posted to a platform twice inside `COOLDOWN_DAYS`
+
+**Warnings** — `HEALTH (warning):` — degraded but not broken; the run still exits 0.
+Failing here would trip the retry wrapper five times over a condition that won't clear.
+
+- articles still unclassified (platform content-type routing degraded)
+- articles that exhausted their content-fetch retries (Medium won't serve some pages
+  to a scraper; those post from the RSS snippet)
+- LinkedIn first comments overdue by 48h
 
 The cooldown check is scoped to history written after the `health_baseline` row in
-`schema_meta`, which is stamped the first time the current schema initialises. History
-from before that point contains known duplicates and is deliberately ignored.
+`schema_meta`, stamped the first time the current schema initialises. History from
+before that point contains known duplicates and is deliberately ignored.
 
-Because a failing check now exits non-zero, `run_with_retry.sh` will retry the whole
-invocation up to 5 times. Health problems are usually persistent, so expect the retries
-to burn through quickly and the job to end non-zero — that is the intended signal.
+## Articles vs Medium responses
+
+A Medium export bundles your replies in with your posts, and the archive importer
+originally took everything with a canonical URL — so ~200 two-sentence comments sat in
+the promotion pool as if they were articles.
+
+`content.content_kind` is `article` or `response`; only articles are eligible for
+promotion, classification, or content backfill. The importer now skips responses
+structurally (a reply has no `graf--title` element), and `classify_content_kind()` in
+`db.py` labels anything already in the catalog. That classifier is deliberately biased
+against false positives — a few long replies stay marked `article` rather than risk
+discarding a real post. Responses already in `post_history` keep their history; they
+simply stop being selected.
 
 ## Repeat suppression
 

@@ -87,16 +87,24 @@ def _stuck_comments(conn: sqlite3.Connection) -> str | None:
     return None
 
 
-CHECKS = (
+# Errors mean the repeat-suppression invariants are broken and the run should fail.
+# Warnings are degradations worth surfacing but not worth failing (and retrying) over --
+# a single unscrapeable article must not make every run exit non-zero for five retries.
+ERROR_CHECKS = (
     _orphaned_history,
     _non_canonical_ids,
     _cooldown_violations,
+)
+
+WARNING_CHECKS = (
     _unclassified_backlog,
     _stalled_fetches,
     _stuck_comments,
 )
 
 
-def run_health_checks(conn: sqlite3.Connection) -> list[str]:
-    """Return a list of human-readable problems. Empty means healthy."""
-    return [problem for check in CHECKS if (problem := check(conn))]
+def run_health_checks(conn: sqlite3.Connection) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings). Errors should fail the run; warnings are informational."""
+    errors = [problem for check in ERROR_CHECKS if (problem := check(conn))]
+    warnings = [problem for check in WARNING_CHECKS if (problem := check(conn))]
+    return errors, warnings

@@ -12,7 +12,7 @@ def _sample_item(content_id="http://example.com/1"):
         "title": "Test Article",
         "url": content_id,
         "published_date": "2024-01-01T00:00:00+00:00",
-        "description": "Test description",
+        "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
         "tags": [],
     }
 

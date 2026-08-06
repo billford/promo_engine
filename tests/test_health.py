@@ -22,7 +22,7 @@ def _add_article(conn, content_id=ARTICLE, content_type="business"):
         "title": "An Article",
         "url": content_id,
         "published_date": "2024-01-01T00:00:00+00:00",
-        "description": "d",
+        "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
         "tags": [],
         "content_type": content_type,
         "full_content_fetched": 1,
@@ -32,7 +32,7 @@ def _add_article(conn, content_id=ARTICLE, content_type="business"):
 def test_healthy_db_reports_nothing(db_path):
     with get_conn(db_path) as conn:
         _add_article(conn)
-        assert run_health_checks(conn) == []
+        assert run_health_checks(conn) == ([], [])
 
 
 def test_detects_cooldown_violation(db_path):
@@ -43,20 +43,20 @@ def test_detects_cooldown_violation(db_path):
             insert_post_record(conn, "medium:155c27d86f7f", "linkedin", "text")
         problems = run_health_checks(conn)
 
-    assert any("cooldown" in p for p in problems)
+    assert any("cooldown" in p for p in problems[0])
 
 
 def test_detects_unclassified_backlog(db_path):
     with get_conn(db_path) as conn:
         _add_article(conn, content_type=None)
-        assert any("unclassified" in p for p in run_health_checks(conn))
+        assert any("unclassified" in p for p in run_health_checks(conn)[1])  # warning
 
 
 def test_detects_orphaned_history(db_path):
     with get_conn(db_path, enforce_fk=False) as conn:
         _add_article(conn)
         insert_post_record(conn, "medium:does-not-exist", "linkedin", "text")
-        assert any("no matching article" in p for p in run_health_checks(conn))
+        assert any("no matching article" in p for p in run_health_checks(conn)[0])  # error
 
 
 def test_foreign_keys_block_orphan_inserts(db_path):
@@ -76,7 +76,7 @@ def test_cooldown_check_ignores_pre_baseline_history(db_path):
         )
         for _ in range(2):
             insert_post_record(conn, "medium:155c27d86f7f", "linkedin", "text")
-        assert not any("cooldown" in p for p in run_health_checks(conn))
+        assert not any("cooldown" in p for p in run_health_checks(conn)[0])
 
 
 def test_orphan_history_repair_reattaches_by_slug(db_path):
@@ -90,6 +90,16 @@ def test_orphan_history_repair_reattaches_by_slug(db_path):
     reinit(db_path)
 
     with get_conn(db_path) as conn:
-        assert run_health_checks(conn) == []
+        assert run_health_checks(conn) == ([], [])
         row = conn.execute("SELECT content_id FROM post_history").fetchone()
         assert row["content_id"] == "medium:155c27d86f7f"
+
+
+def test_stalled_fetch_is_a_warning_not_an_error(db_path):
+    """One unscrapeable article must not fail the run and trigger five retries."""
+    with get_conn(db_path) as conn:
+        _add_article(conn)
+        conn.execute("UPDATE content SET full_content_fetched = 0, fetch_attempts = 99")
+        errors, warnings = run_health_checks(conn)
+    assert errors == []
+    assert any("fetch attempts" in w for w in warnings)

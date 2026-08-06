@@ -50,7 +50,7 @@ def test_url_variants_collapse_to_one_catalog_row(db_path):
                 "title": "Help, AI Deleted My Company",
                 "url": url,
                 "published_date": "2026-04-30T18:23:31+00:00",
-                "description": "d",
+                "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
                 "tags": [],
             })
         assert len(get_all_content(conn)) == 1
@@ -61,8 +61,8 @@ def test_cooldown_covers_every_url_variant(db_path):
     with get_conn(db_path) as conn:
         for url in MEDIUM_VARIANTS:
             upsert_content(conn, {
-                "id": url, "source": "medium", "title": "T", "url": url,
-                "published_date": "2026-04-30T18:23:31+00:00", "description": "d", "tags": [],
+                "id": url, "source": "medium", "title": "A Test Article Title", "url": url,
+                "published_date": "2026-04-30T18:23:31+00:00", "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ', "tags": [],
             })
         insert_post_record(
             conn,
@@ -89,7 +89,7 @@ def _sample_content(content_id="http://example.com/1", source="medium", content_
         "title": "Test Article",
         "url": content_id,
         "published_date": "2024-01-01T00:00:00+00:00",
-        "description": "A test article description.",
+        "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
         "tags": ["tech", "ai"],
         "content_type": content_type,
     }
@@ -215,3 +215,59 @@ def test_insert_post_record_dry_run(db_path):
         insert_post_record(conn, "http://example.com/1", "linkedin", "post text", dry_run=True)
         history = get_recent_post_history(conn, days=7)
     assert len(history) == 0
+
+
+REAL_ARTICLES = [
+    ("Cybersecurity Clichés: How Companies Dodge Responsibility", 91),
+    ("A Sort Of Halloween Ghost Tale", 177),
+    ("My Plain Old Soul", 412),
+    ("Rheumatoid Arthritis, Surviving & AI", 500),
+    ("Bill's Short Blasts: Holiday Movies", 545),
+    ("Who's Afraid of Their TBR?", 2021),          # '?' is valid headline punctuation
+    ("Where In The World Do These People Come From?", 834),
+    ("Software Defined Radio is Fun: AI Can Help You Learn It.", 3000),
+]
+
+MEDIUM_RESPONSES = [
+    ("Thank you", 32),
+    ("Fair", 26),
+    ("Lizzie Borden", 36),
+    ("True story", 33),
+    ("Same. Had no idea", 40),
+    ("I think there's a lot of merit to this.", 302),
+    ("Huge Prince fan.", 331),
+    ("I know I'm going to get piled on for this, but I hate Nolan films.", 539),
+    ("You might be the first person I've ever heard of that doesn't eat snacks", 526),
+]
+
+
+@pytest.mark.parametrize("title,length", REAL_ARTICLES)
+def test_real_articles_are_not_classified_as_responses(title, length):
+    from db import classify_content_kind
+    assert classify_content_kind("medium:x", title, "x" * length) == "article"
+
+
+@pytest.mark.parametrize("title,length", MEDIUM_RESPONSES)
+def test_medium_replies_are_classified_as_responses(title, length):
+    from db import classify_content_kind
+    assert classify_content_kind("medium:x", title, "x" * length) == "response"
+
+
+def test_responses_are_excluded_from_selection(db_path):
+    """A Medium reply must never reach the promotion pool."""
+    from db import get_oldest_content_by_platform
+    with get_conn(db_path) as conn:
+        upsert_content(conn, {
+            "id": "https://medium.com/@billfordx/thank-you-34610b897100",
+            "source": "medium", "title": "Thank you",
+            "url": "https://medium.com/@billfordx/thank-you-34610b897100",
+            "published_date": "2024-01-01T00:00:00+00:00",
+            "description": "Thank you so much.", "tags": [],
+        })
+        upsert_content(conn, _sample_content("https://billfordx.medium.com/real-155c27d86f7f"))
+
+        assert conn.execute(
+            "SELECT content_kind FROM content WHERE id = 'medium:34610b897100'"
+        ).fetchone()[0] == "response"
+        assert [r["id"] for r in get_eligible_content(conn, "linkedin", 30)] == ["medium:155c27d86f7f"]
+        assert [r["id"] for r in get_oldest_content_by_platform(conn, "linkedin")] == ["medium:155c27d86f7f"]

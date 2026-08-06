@@ -35,13 +35,13 @@ def parse_post(html_path: Path) -> dict | None:
     if "medium.com" not in url:
         return None
 
-    # Title — Medium exports use <h3 class="...graf--title..."> inside the article
+    # Title — Medium exports use <h3 class="...graf--title..."> inside the article.
+    # A reply has no title element, which is how responses are told apart from posts.
+    # Importing them put ~200 two-sentence comments into the promotion pool.
     title_tag = soup.find(class_=re.compile(r"graf--title"))
-    if title_tag:
-        title = title_tag.get_text(strip=True)
-    else:
-        title_el = soup.find("title")
-        title = re.sub(r"\s*[-–|]\s*Medium\s*$", "", title_el.get_text(strip=True)) if title_el else ""
+    if not title_tag:
+        return None
+    title = title_tag.get_text(strip=True)
 
     # Published date — <time class="dt-published" datetime="...">
     time_tag = soup.find("time", class_="dt-published")
@@ -96,7 +96,7 @@ def run(archive_path: Path, db_path: str, verbose: bool, dry_run: bool) -> None:
             if post is None:
                 skipped += 1
                 if verbose:
-                    print(f"  SKIP (no canonical URL): {html_file.name}")
+                    print(f"  SKIP (response, or no canonical URL): {html_file.name}")
                 continue
 
             if dry_run:
@@ -123,7 +123,7 @@ def run(archive_path: Path, db_path: str, verbose: bool, dry_run: bool) -> None:
 
     print("\nResults:")
     print(f"  Imported:       {imported:>4}")
-    print(f"  Skipped:        {skipped:>4}  (no canonical URL)")
+    print(f"  Skipped:        {skipped:>4}  (responses and non-canonical pages)")
     if not dry_run:
         print(f"  Already in DB:  {already_in_db:>4}")
     print(f"\nDone. {imported} posts now available to the scorer.")

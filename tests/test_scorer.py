@@ -4,6 +4,9 @@ import pytest
 from db import init_db, get_conn, upsert_content
 from scorer import _build_catalog_text, pick_content
 
+# Long enough that classify_content_kind() treats fixtures as articles, not replies.
+ARTICLE_BODY = 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. '
+
 
 def _sample_item(content_id="http://example.com/1", content_type="business"):
     return {
@@ -12,7 +15,7 @@ def _sample_item(content_id="http://example.com/1", content_type="business"):
         "title": "Test Article",
         "url": content_id,
         "published_date": "2024-01-01T00:00:00+00:00",
-        "description": "Test description",
+        "description": ARTICLE_BODY,
         "tags": ["tech"],
         "content_type": content_type,
         "last_posted": None,
@@ -80,7 +83,7 @@ def test_pick_content_returns_required_keys(mock_cls, db_path):
             "title": "Test Article",
             "url": "http://example.com/1",
             "published_date": "2024-01-01",
-            "description": "desc",
+            "description": ARTICLE_BODY,
             "tags": [],
         })
         result = pick_content(conn, {"anthropic_api_key": "key"}, ["linkedin"], "business")
@@ -110,7 +113,7 @@ def test_pick_content_handles_json_with_preamble(mock_cls, db_path):
             "title": "T",
             "url": "http://example.com/1",
             "published_date": "2024-01-01",
-            "description": "desc",
+            "description": ARTICLE_BODY,
             "tags": [],
         })
         result = pick_content(conn, {"anthropic_api_key": "key"}, ["linkedin"])
@@ -144,7 +147,7 @@ def test_pick_content_uses_db_fields_not_model_transcription(mock_cls, db_path):
     assert selected["title"] == "Test Article"  # not the model's invented title
     assert selected["source"] == "medium"
     assert selected["content_id"] == "medium:155c27d86f7f"
-    assert selected["description"] == "Test description"
+    assert selected["description"] == ARTICLE_BODY
 
 
 @patch("scorer.anthropic.Anthropic")

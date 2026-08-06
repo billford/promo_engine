@@ -17,7 +17,7 @@ def _insert_content_and_post(conn, content_id, platform):
         "title": f"Article {content_id}",
         "url": content_id,
         "published_date": "2024-01-01",
-        "description": "desc",
+        "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
         "tags": [],
     })
     insert_post_record(conn, content_id, platform, f"Post about {content_id}")
@@ -50,7 +50,7 @@ def test_print_weekly_report_excludes_dry_runs(db_path, capsys):
             "title": "Dry Run Article",
             "url": "http://example.com/1",
             "published_date": "2024-01-01",
-            "description": "desc",
+            "description": 'A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. A full-length test article body that comfortably exceeds the stub threshold so the catalog treats it as a promotable article rather than a Medium reply. ',
             "tags": [],
         })
         insert_post_record(conn, "http://example.com/1", "linkedin", "text", dry_run=True)

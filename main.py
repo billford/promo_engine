@@ -179,9 +179,11 @@ def main():
                 print(f"ERROR [{platform}]: {type(exc).__name__}: {exc}", file=sys.stderr)
 
         from health import run_health_checks
-        problems = run_health_checks(conn)
+        problems, warnings = run_health_checks(conn)
+        for warning in warnings:
+            print(f"HEALTH (warning): {warning}", file=sys.stderr)
         for problem in problems:
-            print(f"HEALTH: {problem}", file=sys.stderr)
+            print(f"HEALTH (error): {problem}", file=sys.stderr)
 
     if args.dry_run:
         print("\nDry run complete. Records logged to DB with dry_run=1.")
