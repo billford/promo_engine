@@ -180,3 +180,37 @@ def test_pick_content_tolerates_url_variant_of_chosen_id(mock_cls, db_path):
         selected = pick_content(conn, {"anthropic_api_key": "k"}, ["linkedin"])
 
     assert selected["content_id"] == "medium:155c27d86f7f"
+
+
+@patch("scorer.anthropic.Anthropic")
+def test_pick_content_tolerates_id_missing_source_prefix(mock_cls, db_path):
+    """The scorer sometimes drops the 'medium:' prefix; that shouldn't kill the run."""
+    mock_client = MagicMock()
+    mock_cls.return_value = mock_client
+    mock_client.messages.create.return_value = _scorer_response({
+        "content_id": "3d224b5fcc8a",
+        "title": "T", "url": "u", "source": "medium", "rationale": "r",
+    })
+
+    with get_conn(db_path) as conn:
+        upsert_content(conn, _sample_item("https://billfordx.medium.com/real-3d224b5fcc8a"))
+        selected = pick_content(conn, {"anthropic_api_key": "k"}, ["linkedin"])
+
+    assert selected["content_id"] == "medium:3d224b5fcc8a"
+
+
+@patch("scorer.anthropic.Anthropic")
+def test_pick_content_rejects_ambiguous_bare_id(mock_cls, db_path):
+    """A bare id matching more than one catalog item must still fail loudly."""
+    mock_client = MagicMock()
+    mock_cls.return_value = mock_client
+    mock_client.messages.create.return_value = _scorer_response({
+        "content_id": "duplicate-key",
+        "title": "T", "url": "u", "source": "medium", "rationale": "r",
+    })
+
+    with get_conn(db_path) as conn:
+        upsert_content(conn, _sample_item("medium:duplicate-key"))
+        upsert_content(conn, _sample_item("youtube:duplicate-key"))
+        with pytest.raises(RuntimeError, match="not in the catalog"):
+            pick_content(conn, {"anthropic_api_key": "k"}, ["linkedin"])

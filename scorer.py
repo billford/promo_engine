@@ -41,7 +41,9 @@ Scoring criteria (apply in order of weight):
 4. YouTube boost — YouTube videos are underused on text-based platforms and get a scoring boost
 5. Engagement hook — strong opinion, surprising claim, or clear specific insight
 
-Respond with JSON only, no preamble, no explanation outside the JSON:
+Respond with JSON only, no preamble, no explanation outside the JSON.
+Copy content_id verbatim from the catalog's "ID:" line, including its "medium:" or
+"youtube:" prefix. Do not shorten it, and do not substitute the URL for it.
 {{
   "content_id": "<id>",
   "title": "<title>",
@@ -202,5 +204,14 @@ def _match_catalog_item(items: list[dict], content_id: str) -> dict | None:
     canonical = canonical_content_id(content_id)
     if canonical in by_id:
         return by_id[canonical]
+
+    # The scorer sometimes echoes the id with its "medium:"/"youtube:" prefix stripped.
+    # Accept the bare key only when exactly one catalog item carries it, so a genuinely
+    # ambiguous id still fails loudly rather than promoting the wrong article.
+    bare = canonical.split(":", 1)[-1].strip()
+    if bare:
+        matches = [i for k, i in by_id.items() if k.split(":", 1)[-1] == bare]
+        if len(matches) == 1:
+            return matches[0]
 
     return None
