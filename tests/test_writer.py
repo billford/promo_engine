@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from writer import BLUESKY_LIMIT, _enforce_bluesky_limit, write_post
+from writer import BLUESKY_LIMIT, _enforce_bluesky_limit, _ensure_link, write_post
 
 
 def test_bluesky_limit_under_280_unchanged():
@@ -69,3 +69,55 @@ def test_write_post_adds_ai_promoted_if_missing(mock_cls):
     result = write_post(content, {"anthropic_api_key": "key"}, "bluesky")
     assert "#AIPromoted" in result
     assert len(result) <= BLUESKY_LIMIT
+
+
+ATTRIBUTION = "[Post written by AI Promotion Engine — article is all human]"
+
+
+def test_ensure_link_leaves_post_that_already_links_alone():
+    url = "https://medium.com/@billfordx/the-call-6455ab0611e2"
+    text = f"A summary.\n\nRead it here: {url}\n\n#Tag\n\n{ATTRIBUTION}"
+    assert _ensure_link(text, url) == text
+
+
+def test_ensure_link_accepts_an_equivalent_url_variant():
+    """Same article under a different Medium host is still a working link."""
+    stored = "https://billfordx.medium.com/the-call-6455ab0611e2?source=rss-x"
+    in_post = "https://medium.com/@billfordx/the-call-6455ab0611e2"
+    text = f"A summary. {in_post}\n\n{ATTRIBUTION}"
+    assert _ensure_link(text, stored) == text
+
+
+def test_ensure_link_inserts_above_attribution_line():
+    url = "https://medium.com/@billfordx/the-call-6455ab0611e2"
+    text = f"A summary.\n\nRead the full piece on Medium.\n\n#Tag\n\n{ATTRIBUTION}"
+    result = _ensure_link(text, url)
+    assert url in result
+    assert result.rstrip().endswith(ATTRIBUTION)
+    assert result.index(url) < result.index(ATTRIBUTION)
+
+
+def test_ensure_link_appends_when_no_attribution_line():
+    url = "https://medium.com/@billfordx/the-call-6455ab0611e2"
+    result = _ensure_link("A summary with no link.", url)
+    assert result.endswith(url)
+
+
+@patch("writer.anthropic.Anthropic")
+def test_write_post_facebook_always_carries_the_link(mock_cls):
+    """The neutral-summary prompt stopped volunteering a URL; Facebook posts are pasted by hand."""
+    mock_client = MagicMock()
+    mock_cls.return_value = mock_client
+    mock_client.messages.create.return_value = MagicMock(
+        content=[MagicMock(text=f"A summary.\n\nRead the full piece on Medium.\n\n#Tag\n\n{ATTRIBUTION}")]
+    )
+
+    content = {
+        "title": "Test",
+        "source": "medium",
+        "url": "https://medium.com/@billfordx/the-call-6455ab0611e2",
+        "description": "desc",
+    }
+    result = write_post(content, {"anthropic_api_key": "key"}, "facebook")
+    assert content["url"] in result
+    assert result.rstrip().endswith(ATTRIBUTION)
