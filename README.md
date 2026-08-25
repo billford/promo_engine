@@ -1,6 +1,6 @@
 # promo_engine
 
-Daily content promotion engine. Picks one piece of published work each day, writes platform-appropriate social posts in the author's voice, and hands them to Publora for scheduling.
+Daily content promotion engine. Picks one piece of published work each day, writes a short, lightly inviting summary of it for each platform, and hands them to Publora for scheduling.
 
 One post per platform per day. Every post tagged as AI-assisted.
 
@@ -109,6 +109,8 @@ Two jobs are required: one to run the daily engine, and one to post the LinkedIn
 **Don't put the project directory under `~/Documents`, `~/Desktop`, or any other iCloud Drive-synced folder.** If local disk space gets tight, macOS's "Optimize Mac Storage" will evict the project's files to dataless iCloud placeholders. A scheduled job that fires while a file is mid-fault-in can crash at import time with `OSError: [Errno 11] Resource deadlock avoided` — before any of the app's own retry logic ever runs. Keep the checkout somewhere local-only, e.g. `~/Developer/promo_engine`.
 
 Both jobs should also run through `run_with_retry.sh` instead of calling `python3` directly. It retries the whole invocation (5 attempts, 20s apart) if the process exits non-zero, which is cheap insurance against any other transient startup failure.
+
+Because that wrapper re-runs *everything*, and `main.py` exits non-zero when any single platform fails, each platform first checks whether it already has a real (non-dry-run) post recorded for the current local day and skips itself if so. A retry therefore only picks up the platforms that actually failed, instead of posting twice to the ones that succeeded.
 
 ### Option A — macOS launchd (recommended)
 

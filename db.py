@@ -3,6 +3,7 @@ import json
 import re
 from datetime import datetime, timezone
 from contextlib import contextmanager
+from zoneinfo import ZoneInfo
 
 
 _YOUTUBE_URL_RE = re.compile(r"(?:youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]{11})")
@@ -588,3 +589,23 @@ def insert_post_record(
             1 if dry_run else 0,
         ),
     )
+
+
+def has_posted_today(conn: sqlite3.Connection, platform: str, tz: ZoneInfo) -> bool:
+    """True if a real (non-dry-run) post already went out for this platform today.
+
+    run_with_retry.sh re-runs the whole invocation when main.py exits non-zero, and
+    main.py exits non-zero when *any* platform fails. Without this check, one failing
+    platform makes the retry repost every platform that already succeeded.
+    Day boundaries are local, matching the once-a-day local posting schedule.
+    """
+    day_start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    row = conn.execute(
+        """
+        SELECT 1 FROM post_history
+        WHERE platform = ? AND dry_run = 0 AND posted_at >= ?
+        LIMIT 1
+        """,
+        (platform, day_start.astimezone(timezone.utc).isoformat()),
+    ).fetchone()
+    return row is not None

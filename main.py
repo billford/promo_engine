@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import sys
+from zoneinfo import ZoneInfo
 
 from config import load_config
-from db import init_db, get_conn, insert_post_record
+from db import init_db, get_conn, insert_post_record, has_posted_today
 
 PLATFORM_CONTENT_TYPE = {
     "linkedin": "business",
@@ -55,6 +56,13 @@ def print_weekly_report(conn) -> None:
 
 
 def run_platform(platform: str, conn, config: dict, args) -> None:
+    tz = ZoneInfo(config.get("timezone", "America/New_York"))
+    if not args.dry_run and has_posted_today(conn, platform, tz):
+        # A retry of the whole invocation (run_with_retry.sh) must not repost the
+        # platforms that already succeeded on the earlier attempt.
+        print(f"\nSkipping {platform}: already posted today.")
+        return
+
     content_type_pref = PLATFORM_CONTENT_TYPE.get(platform, "business")
 
     from scorer import pick_content
@@ -77,8 +85,6 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
         print(post_text)
         if args.dry_run and platform == "facebook":
             from datetime import datetime, timedelta
-            from zoneinfo import ZoneInfo
-            tz = ZoneInfo(config.get("timezone", "America/New_York"))
             now = datetime.now(tz)
             due_dt = now.replace(hour=10, minute=0, second=0, microsecond=0)
             if due_dt <= now:
