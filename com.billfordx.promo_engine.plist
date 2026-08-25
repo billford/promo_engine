@@ -4,16 +4,21 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.billfordx.promo_engine</string>
+    <string>local.promo-engine.daily</string>
 
+    <!-- Goes through run_with_retry.sh, never python3 directly. See README. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/billfordx/Documents/promo_engine/.venv/bin/python3</string>
-        <string>/Users/billfordx/Documents/promo_engine/main.py</string>
+        <string>/Users/billfordx/Developer/promo_engine/run_with_retry.sh</string>
+        <string>/Users/billfordx/Developer/promo_engine/.venv/bin/python3</string>
+        <string>/Users/billfordx/Developer/promo_engine/main.py</string>
+        <string>--platform</string>
+        <string>all</string>
     </array>
 
+    <!-- Not under ~/Documents: iCloud eviction breaks scheduled runs. See README. -->
     <key>WorkingDirectory</key>
-    <string>/Users/billfordx/Documents/promo_engine</string>
+    <string>/Users/billfordx/Developer/promo_engine</string>
 
     <key>StartCalendarInterval</key>
     <dict>
@@ -24,10 +29,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/billfordx/Documents/promo_engine/promo_engine.log</string>
+    <string>/Users/billfordx/Developer/promo_engine/promo_engine.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/billfordx/Documents/promo_engine/promo_engine.log</string>
+    <string>/Users/billfordx/Developer/promo_engine/promo_engine.log</string>
 
     <key>RunAtLoad</key>
     <false/>
