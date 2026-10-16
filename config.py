@@ -14,7 +14,12 @@ COOLDOWN_DAYS = 30
 # Hard floor on re-selecting the same article, applied even on the cooldown-exhausted
 # fallback path. Counts dry runs so testing doesn't leak repeats into live posting.
 RECENT_SELECTION_DAYS = 14
+# How many eligible articles the scorer sees per pick, sampled evenly across years.
+SHORTLIST_SIZE = 30
 POST_HOUR = 9
+# A photo is not reused on a live post within this window.
+IMAGE_COOLDOWN_DAYS = 90
+IMAGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
 
 
 def load_config() -> dict:
@@ -32,4 +37,16 @@ def load_config() -> dict:
         "timezone": os.getenv("TIMEZONE", "America/New_York"),
         "reminders_list": os.getenv("REMINDERS_LIST", "Social Posts"),
         "db_path": os.getenv("DB_PATH", "promo_engine.db"),
+        # Optional: Negative Space photo library (Postgres). Unset = text-only posts.
+        "photo_db_url": os.getenv("PHOTO_DB_URL"),
+        "image_dir": IMAGE_DIR,
+        # "browser" stages the post in Chrome for a one-click publish; "reminder" is the
+        # old manual flow, and also the fallback whenever the browser path fails.
+        "facebook_mode": os.getenv("FACEBOOK_MODE", "browser"),
+        # Holds the logged-in Facebook session, so it lives outside the repo.
+        "fb_browser_profile": os.getenv(
+            "FB_BROWSER_PROFILE",
+            os.path.expanduser("~/Library/Application Support/promo_engine/facebook-chrome"),
+        ),
+        "fb_debug_port": int(os.getenv("FB_DEBUG_PORT", "9223")),
     }

@@ -214,3 +214,46 @@ def test_pick_content_rejects_ambiguous_bare_id(mock_cls, db_path):
         upsert_content(conn, _sample_item("youtube:duplicate-key"))
         with pytest.raises(RuntimeError, match="not in the catalog"):
             pick_content(conn, {"anthropic_api_key": "k"}, ["linkedin"])
+
+
+def _dated_item(n: int, year: int, content_type="personal"):
+    item = _sample_item(f"http://example.com/{year}-{n}", content_type)
+    item["published_date"] = f"{year}-06-01T00:00:00+00:00"
+    return item
+
+
+def test_shortlist_spreads_picks_across_years():
+    import random
+    from scorer import _shortlist
+    # Recent years dominate the raw catalog the way they do in the real archive.
+    items = (
+        [_dated_item(n, 2026) for n in range(60)]
+        + [_dated_item(n, 2025) for n in range(10)]
+        + [_dated_item(n, 2024) for n in range(10)]
+    )
+    picked = _shortlist(items, "personal", size=24, rng=random.Random(1))
+    years = [i["published_date"][:4] for i in picked]
+    assert len(picked) == 24
+    assert years.count("2026") == years.count("2025") == years.count("2024") == 8
+
+
+def test_shortlist_prefers_requested_type_and_backfills_thin_years():
+    import random
+    from scorer import _shortlist
+    items = (
+        [_dated_item(n, 2026) for n in range(20)]
+        + [_dated_item(n, 2024) for n in range(2)]
+        + [_dated_item(n, 2025, "business") for n in range(20)]
+    )
+    picked = _shortlist(items, "personal", size=10, rng=random.Random(1))
+    assert len(picked) == 10
+    assert all(i["content_type"] == "personal" for i in picked)
+    assert sum(i["published_date"].startswith("2024") for i in picked) == 2
+
+
+def test_shortlist_falls_back_to_other_types_when_preferred_is_scarce():
+    import random
+    from scorer import _shortlist
+    items = [_dated_item(0, 2026)] + [_dated_item(n, 2025, "business") for n in range(10)]
+    picked = _shortlist(items, "personal", size=5, rng=random.Random(1))
+    assert len(picked) == 5

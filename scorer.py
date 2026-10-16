@@ -1,4 +1,5 @@
 import json
+import random
 import re
 import sys
 import sqlite3
@@ -6,7 +7,7 @@ from datetime import date
 
 import anthropic
 
-from config import CLAUDE_MODEL, COOLDOWN_DAYS, RECENT_SELECTION_DAYS
+from config import CLAUDE_MODEL, COOLDOWN_DAYS, RECENT_SELECTION_DAYS, SHORTLIST_SIZE
 from db import (
     canonical_content_id,
     get_eligible_content,
@@ -36,8 +37,11 @@ if no '{content_type_pref}' content is available.
 
 Scoring criteria (apply in order of weight):
 1. Content type match — must match platform preference above
-2. Evergreen value — prefer content that doesn't go stale over time-sensitive posts
-3. Variety — avoid the same topic category as recent posts (check recent history provided)
+2. Evergreen value — prefer content that doesn't go stale over time-sensitive posts.
+   Publication date is not a quality signal: a strong piece from two years ago is as
+   good a pick as last week's.
+3. Variety — avoid the topic, theme or format of recent posts on this platform (e.g. not
+   another movie review, conspiracy piece or photography post if one ran recently)
 4. YouTube boost — YouTube videos are underused on text-based platforms and get a scoring boost
 5. Engagement hook — strong opinion, surprising claim, or clear specific insight
 
@@ -59,7 +63,7 @@ def _build_catalog_text(items: list[dict], recent_history: list[dict]) -> str:
 
     if recent_history:
         lines.append("Recent post history (avoid same category):")
-        for h in recent_history[:10]:
+        for h in recent_history:
             lines.append(f"  - [{h['platform']}] {h['title']} ({h['source']}) — {h['posted_at'][:10]}")
         lines.append("")
 
@@ -118,6 +122,37 @@ def _resolve_eligible_items(conn: sqlite3.Connection, active_platforms: list[str
     return fresh[:20]
 
 
+def _shortlist(
+    items: list[dict], content_type_pref: str, size: int = SHORTLIST_SIZE, rng=random
+) -> list[dict]:
+    """A random sample spread evenly across publication years, in shuffled order.
+
+    Handing the scorer the whole catalog newest-first meant it kept choosing from the
+    top of the list, so recent articles were picked far more often than their share of
+    the archive.
+    """
+    preferred = [i for i in items if (i.get("content_type") or "unclassified") in (content_type_pref, "unclassified")]
+    pool = preferred if len(preferred) >= min(size, 5) else items
+
+    by_year: dict[str, list[dict]] = {}
+    for item in pool:
+        by_year.setdefault((item.get("published_date") or "unknown")[:4], []).append(item)
+    for bucket in by_year.values():
+        rng.shuffle(bucket)
+
+    # Round-robin across years so each year gets an equal turn until it runs dry.
+    picked: list[dict] = []
+    buckets = list(by_year.values())
+    while len(picked) < size and buckets:
+        for bucket in buckets:
+            if bucket and len(picked) < size:
+                picked.append(bucket.pop())
+        buckets = [b for b in buckets if b]
+
+    rng.shuffle(picked)
+    return picked
+
+
 def _is_linkedin_appropriate(item: dict) -> bool:
     text = (item.get("title", "") + " " + item.get("description", "")).lower()
     return not any(pat in text for pat in LINKEDIN_EXCLUDE_PATTERNS)
@@ -132,12 +167,17 @@ def pick_content(
     client = anthropic.Anthropic(api_key=config["anthropic_api_key"])
     active_platforms = platforms or ["linkedin"]
 
-    eligible_items = _resolve_eligible_items(conn, active_platforms)
+    eligible_items = _shortlist(_resolve_eligible_items(conn, active_platforms), content_type_pref)
 
     if not eligible_items:
         raise RuntimeError("Content catalog is empty. Run the Medium archive importer first.")
 
-    recent_history = get_recent_post_history(conn, days=7)
+    # Two weeks of this platform's own posts. The old cross-platform top-10 only reached
+    # back about three days, too short to notice a run of similar topics.
+    recent_history = [
+        h for h in get_recent_post_history(conn, days=RECENT_SELECTION_DAYS)
+        if h["platform"] in active_platforms
+    ]
     catalog_text = _build_catalog_text(eligible_items, recent_history)
 
     platform_label = active_platforms[0] if len(active_platforms) == 1 else "/".join(active_platforms)

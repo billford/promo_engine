@@ -266,6 +266,67 @@ several hosts and the raw link made one article look like several:
 3. The scorer's chosen id must resolve to a real catalog row; an unrecognised id
    aborts that platform rather than posting a model-invented URL.
 
+## Photos from Negative Space
+
+Bluesky and Facebook posts can carry a photo from the Negative Space library
+(`~/projects/photo_classifier`, Postgres on misfit). Set `PHOTO_DB_URL` in `.env` to turn
+it on; leave it unset for text-only posts. LinkedIn stays text-only for now.
+
+Per post, `images.py` asks Claude for visual search terms, full-text searches the photo
+descriptions and tags, and has Claude pick one of the top 25 or pass.
+
+- **No people, no home.** The library is mostly family photos, so SQL drops anything whose
+  description or tags mention people, body parts, screens, documents, or home/street
+  scenes (`PEOPLE_RE`, `PRIVATE_RE`), and the picker is told to reject the same.
+- **Only our own photos.** The library also holds downloaded and watermarked images and
+  AI generations, so only photos whose EXIF camera make is in `OWN_CAMERA_MAKES` (Nikon,
+  Apple, DJI) are considered. About 7,000 of 37,000 photos are eligible.
+- **Claude looks at the actual photo.** Descriptions miss things (a stranger reflected in
+  aquarium glass, hikers a few pixels tall at the foot of a waterfall), so before a photo
+  is attached Claude checks the prepared file, whole and in zoomed sections, for people,
+  text, watermarks, and poor quality. Up to 3 ranked picks are tried; if none pass, no photo.
+- **No metadata leaves the machine.** The original is converted with `sips`, then
+  re-encoded by Pillow with every EXIF tag (GPS included) dropped, under 1MB, into
+  `images/` (gitignored, pruned after 14 days).
+- **Never costs a post.** Off the home LAN, NAS unmounted, or any error: a warning, and
+  the post goes out text-only.
+- **No reuse.** A photo used on a live post is skipped for `IMAGE_COOLDOWN_DAYS` (90).
+  Dry runs don't count.
+
+Bluesky gets the photo embedded with alt text. Facebook gets a photo only in `reminder`
+mode, where the Reminder links the prepared file to attach by hand (see below). `--dry-run` prints the chosen photo's path so it can be checked first.
+
+## Facebook
+
+Meta has no API for posting to a personal profile, so by default (`FACEBOOK_MODE=browser`)
+the daily run **stages** the post in Chrome: it opens the composer, types the text and
+link, waits for the link preview, and pops a notification. **You click Post.** Nothing is
+published without that click. The run doesn't wait for you; the window just stays open.
+
+One-time setup: sign in once in the dedicated Chrome profile (it's kept outside the repo,
+under `~/Library/Application Support/promo_engine/`):
+
+```bash
+.venv/bin/python facebook_browser.py --login
+.venv/bin/python facebook_browser.py --test "Staging test, do not post"   # then discard it
+```
+
+If staging fails for any reason (logged out, Facebook changed its layout, Chrome missing),
+the run prints a `WARNING [facebook]` and falls back to the old Apple Reminder, so the post
+still reaches you. `FACEBOOK_MODE=reminder` skips the browser entirely.
+
+Worth knowing:
+
+- **Automating Facebook is against Meta's terms.** A person clicking Post, once a day, from
+  your own Chrome keeps the risk low, but a checkpoint or temporary lock is possible.
+- **It will break sometimes.** The composer is found by its accessible labels ("What's on
+  your mind", "Post"), which assumes an English UI. When it breaks, you get the Reminder.
+- **The staging Chrome listens on a local DevTools port** (`FB_DEBUG_PORT`, default 9223)
+  while it's open, and any local process can drive it through that port. Quit that Chrome
+  when you're done if that bothers you; the next run relaunches it.
+- The post is logged to `post_history` when it's staged, not when you click Post (the same
+  as the Reminder flow).
+
 ## Known limitations
 
 **Scoring is heuristic.** Claude picks based on defined criteria. If selections feel off, adjust the `SCORING_SYSTEM_PROMPT` in `scorer.py`.
@@ -292,7 +353,11 @@ promo_engine/
 ├── collector.py                   # Fetches Medium RSS + YouTube catalog
 ├── scorer.py                      # Claude API: picks today's winner
 ├── writer.py                      # Claude API: writes platform posts
+├── images.py                      # Picks a photo from Negative Space for a post
 ├── publora.py                     # Publora API: schedules posts
+├── bluesky.py                     # Bluesky: posts directly
+├── facebook_browser.py            # Facebook: stages the post in Chrome for a manual click
+├── facebook.py                    # Facebook: Apple Reminder fallback
 ├── health.py                      # Post-run invariant checks
 ├── db.py                          # SQLite state management
 ├── config.py                      # Loads .env, constants

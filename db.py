@@ -283,6 +283,7 @@ def init_db(db_path: str) -> None:
             "ALTER TABLE content ADD COLUMN full_content_fetched INTEGER DEFAULT 0",
             "ALTER TABLE content ADD COLUMN fetch_attempts INTEGER DEFAULT 0",
             "ALTER TABLE content ADD COLUMN content_kind TEXT DEFAULT 'article'",
+            "ALTER TABLE post_history ADD COLUMN image_id INTEGER",
         ]:
             try:
                 conn.execute(alter)
@@ -572,12 +573,13 @@ def insert_post_record(
     publora_post_id: str | None = None,
     scheduled_for: str | None = None,
     dry_run: bool = False,
+    image_id: int | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO post_history
-            (content_id, platform, posted_at, post_text, publora_post_id, scheduled_for, dry_run)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (content_id, platform, posted_at, post_text, publora_post_id, scheduled_for, dry_run, image_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             content_id,
@@ -587,8 +589,24 @@ def insert_post_record(
             publora_post_id,
             scheduled_for,
             1 if dry_run else 0,
+            image_id,
         ),
     )
+
+
+def get_recent_image_ids(conn: sqlite3.Connection, days: int) -> set[int]:
+    """Photo ids used on live posts recently. Dry runs don't count: unlike articles, the
+    photo pool is only reachable through this picker, so testing would quietly burn
+    through the best matches."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT image_id FROM post_history
+        WHERE dry_run = 0 AND image_id IS NOT NULL
+          AND posted_at >= datetime('now', ? || ' days')
+        """,
+        (f"-{days}",),
+    ).fetchall()
+    return {r["image_id"] for r in rows}
 
 
 def has_posted_today(conn: sqlite3.Connection, platform: str, tz: ZoneInfo) -> bool:

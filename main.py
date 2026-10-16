@@ -6,6 +6,9 @@ from zoneinfo import ZoneInfo
 from config import load_config
 from db import init_db, get_conn, insert_post_record, has_posted_today
 
+# LinkedIn stays text-only until Publora's media upload is wired in.
+IMAGE_PLATFORMS = {"bluesky", "facebook"}
+
 PLATFORM_CONTENT_TYPE = {
     "linkedin": "business",
     "bluesky": "personal",
@@ -55,6 +58,62 @@ def print_weekly_report(conn) -> None:
     print(f"\nTotal: {total} post(s) across {len(by_date)} day(s)")
 
 
+def _pick_image(platform: str, selected: dict, conn, config: dict, verbose: bool):
+    if platform not in IMAGE_PLATFORMS or not config.get("photo_db_url"):
+        return None
+    if platform == "facebook" and _facebook_uses_browser(config):
+        # The browser flow is text + link only; photo selection isn't good enough yet.
+        return None
+    from config import IMAGE_COOLDOWN_DAYS
+    from db import get_recent_image_ids
+    from images import find_image
+    image = find_image(selected, config, get_recent_image_ids(conn, IMAGE_COOLDOWN_DAYS))
+    if image:
+        print(f"Photo: #{image.photo_id} {image.path}")
+        if verbose:
+            print(f"Alt text: {image.alt_text}")
+    return image
+
+
+def _facebook_uses_browser(config: dict) -> bool:
+    return config.get("facebook_mode", "browser") == "browser"
+
+
+def _post_facebook(selected: dict, post_text: str, image, config: dict):
+    """Stage the post in Chrome, falling back to a Reminder. Returns the image actually used."""
+    if _facebook_uses_browser(config):
+        from facebook_browser import stage_facebook_post
+        try:
+            stage_facebook_post(post_text, config)
+            return None
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            # Anything from a Facebook layout change to a missing Playwright install:
+            # the post still has to reach the user, so hand it over the old way.
+            print(f"WARNING [facebook]: browser staging failed, creating a Reminder instead: {exc}",
+                  file=sys.stderr)
+    from facebook import create_facebook_reminder
+    create_facebook_reminder(selected["title"], post_text, config, image_path=image.path if image else None)
+    return image
+
+
+def _print_preview(platform: str, post_text: str, config: dict, tz: ZoneInfo, dry_run: bool) -> None:
+    label = platform.upper()
+    if platform == "facebook":
+        label += " (Chrome)" if _facebook_uses_browser(config) else " (Reminder)"
+    if dry_run:
+        print(f"\n[DRY RUN] {label}")
+    else:
+        print(f"\n--- {label} ---")
+    print(post_text)
+    if dry_run and platform == "facebook" and not _facebook_uses_browser(config):
+        from datetime import datetime, timedelta
+        now = datetime.now(tz)
+        due_dt = now.replace(hour=10, minute=0, second=0, microsecond=0)
+        if due_dt <= now:
+            due_dt += timedelta(days=1)
+        print(f"Would create Reminder due: {due_dt.strftime('%Y-%m-%dT%H:%M:%S')} local")
+
+
 def run_platform(platform: str, conn, config: dict, args) -> None:
     tz = ZoneInfo(config.get("timezone", "America/New_York"))
     if not args.dry_run and has_posted_today(conn, platform, tz):
@@ -76,20 +135,11 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
     from writer import write_post
     post_text = write_post(selected, config, platform)
 
+    image = _pick_image(platform, selected, conn, config, args.verbose)
+    image_id = image.photo_id if image else None
+
     if args.dry_run or args.verbose:
-        label = "FACEBOOK (Reminder)" if platform == "facebook" else platform.upper()
-        if args.dry_run:
-            print(f"\n[DRY RUN] {label}")
-        else:
-            print(f"\n--- {label} ---")
-        print(post_text)
-        if args.dry_run and platform == "facebook":
-            from datetime import datetime, timedelta
-            now = datetime.now(tz)
-            due_dt = now.replace(hour=10, minute=0, second=0, microsecond=0)
-            if due_dt <= now:
-                due_dt += timedelta(days=1)
-            print(f"Would create Reminder due: {due_dt.strftime('%Y-%m-%dT%H:%M:%S')} local")
+        _print_preview(platform, post_text, config, tz, args.dry_run)
 
     if args.dry_run:
         insert_post_record(
@@ -98,6 +148,7 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
             platform=platform,
             post_text=post_text,
             dry_run=True,
+            image_id=image_id,
         )
         return
 
@@ -125,23 +176,24 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
 
     elif platform == "bluesky":
         from bluesky import post_to_bluesky
-        uri = post_to_bluesky(post_text, config)
+        uri = post_to_bluesky(post_text, config, image=image)
         insert_post_record(
             conn,
             content_id=selected["content_id"],
             platform=platform,
             post_text=post_text,
             publora_post_id=uri,
+            image_id=image_id,
         )
 
     elif platform == "facebook":
-        from facebook import create_facebook_reminder
-        create_facebook_reminder(selected["title"], post_text, config)
+        used_image = _post_facebook(selected, post_text, image, config)
         insert_post_record(
             conn,
             content_id=selected["content_id"],
             platform=platform,
             post_text=post_text,
+            image_id=used_image.photo_id if used_image else None,
         )
 
 

@@ -6,3 +6,6 @@ python-dotenv
 beautifulsoup4
 lxml
 pyobjc-framework-EventKit; sys_platform == "darwin"
+psycopg[binary]
+Pillow
+playwright
