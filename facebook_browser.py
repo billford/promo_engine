@@ -10,13 +10,17 @@ final step.
 Chrome is launched as a detached process with its own profile and a local DevTools port,
 and Playwright only attaches to it over CDP. That keeps the window open after this
 process exits (the daily job doesn't block waiting for the click), and it's the user's
-real Chrome rather than Playwright's automation-flagged Chromium.
+real Chrome rather than Playwright's automation-flagged Chromium. Each run quits and
+relaunches that Chrome first, unless it still holds an unsent post, so the memory it
+piles up between runs is handed back daily.
 
 One-time login:  .venv/bin/python facebook_browser.py --login
 """
 import argparse
 import json
+import os
 import re
+import signal
 import subprocess
 import time
 import urllib.error
@@ -95,6 +99,53 @@ def launch_chrome(config: dict, url: str | None = None) -> tuple[int, bool]:
     raise FacebookBrowserError(f"Chrome DevTools port {port} never came up.")
 
 
+def _has_unsent_draft(port: int) -> bool:
+    """True if any tab has the post composer open. Errs toward True: losing a draft is worse."""
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
+
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            return any(
+                page.get_by_role("dialog").get_by_role("button", name=COMPOSER_SUBMIT).count()
+                for page in browser.contexts[0].pages
+            )
+    except PlaywrightError:
+        return True
+
+
+def _chrome_pid(profile: str) -> int | None:
+    """PID of the dedicated Chrome's main process (its helpers run a different binary)."""
+    ps = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, check=False)
+    for row in ps.stdout.splitlines():
+        pid, _, command = row.strip().partition(" ")
+        if command.startswith(f"{CHROME_BIN} --user-data-dir={profile} "):
+            return int(pid)
+    return None
+
+
+def restart_idle_chrome(config: dict) -> None:
+    """Quit the dedicated Chrome if it's running with no unsent post, freeing its memory.
+
+    It's left alone while any tab still has the composer open, i.e. an earlier post that
+    hasn't been sent or dismissed yet.
+    """
+    port = int(config.get("fb_debug_port", 9223))
+    tabs = _open_pages(port)
+    if tabs is None:
+        return
+    if tabs and _has_unsent_draft(port):
+        print("Earlier Facebook post still open in Chrome; adding a tab instead of restarting.")
+        return
+    pid = _chrome_pid(config["fb_browser_profile"])
+    if pid is None:
+        return
+    os.kill(pid, signal.SIGTERM)  # Chrome treats SIGTERM as a normal quit
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and _open_pages(port) is not None:
+        time.sleep(0.5)
+
+
 def _notify(message: str) -> None:
     subprocess.run(
         ["osascript", "-e", f"display notification {json.dumps(message)} with title \"Promo Engine\""],
@@ -157,6 +208,7 @@ def stage_facebook_post(post_text: str, config: dict) -> None:
     # Imported here so the Reminder fallback still works if Playwright isn't installed.
     from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
+    restart_idle_chrome(config)
     port, opened_window = launch_chrome(config)
     try:
         with sync_playwright() as pw:

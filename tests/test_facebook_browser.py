@@ -172,3 +172,56 @@ def test_login_opens_a_window_even_when_running(monkeypatch, chrome_spawns):
 
     facebook_browser.launch_chrome({"fb_browser_profile": "/p"}, facebook_browser.FACEBOOK_HOME)
     assert chrome_spawns == [facebook_browser.FACEBOOK_HOME]
+
+
+@pytest.fixture()
+def chrome_kills(monkeypatch):
+    import facebook_browser
+
+    killed = []
+    monkeypatch.setattr(facebook_browser, "_chrome_pid", lambda profile: 4242)
+    monkeypatch.setattr(facebook_browser.os, "kill", lambda pid, sig: killed.append(pid))
+    return killed
+
+
+def test_idle_chrome_is_restarted(monkeypatch, chrome_kills):
+    import facebook_browser
+
+    _tabs(monkeypatch, 2, None)  # two tabs, then gone after the quit
+    monkeypatch.setattr(facebook_browser, "_has_unsent_draft", lambda port: False)
+
+    facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
+    assert chrome_kills == [4242]
+
+
+def test_chrome_with_unsent_draft_is_left_running(monkeypatch, chrome_kills):
+    import facebook_browser
+
+    _tabs(monkeypatch, 2)
+    monkeypatch.setattr(facebook_browser, "_has_unsent_draft", lambda port: True)
+
+    facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
+    assert chrome_kills == []
+
+
+def test_windowless_chrome_is_restarted_without_a_draft_check(monkeypatch, chrome_kills):
+    import facebook_browser
+
+    _tabs(monkeypatch, 0, None)
+
+    def _no_check(port):
+        raise AssertionError("Playwright can't attach to a windowless Chrome")
+
+    monkeypatch.setattr(facebook_browser, "_has_unsent_draft", _no_check)
+
+    facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
+    assert chrome_kills == [4242]
+
+
+def test_nothing_to_restart_when_chrome_is_down(monkeypatch, chrome_kills):
+    import facebook_browser
+
+    _tabs(monkeypatch, None)
+
+    facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
+    assert chrome_kills == []
