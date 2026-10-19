@@ -67,14 +67,14 @@ class _FakeKeyboard:
     def __init__(self, typed):
         self.typed = typed
 
-    def type(self, text, delay=0):
+    def type(self, text, **_):
         self.typed.append(text)
 
     def press(self, key):
         self.typed.append(f"<{key}>")
 
 
-class _FakeTextbox:
+class _FakeTextbox:  # pylint: disable=too-few-public-methods
     def __init__(self, typed):
         self.typed = typed
 
@@ -87,7 +87,7 @@ def _run_type_post(monkeypatch, text, matched=lambda tag: True):
 
     typed, registered = [], []
 
-    def _register(page, textbox, tag):
+    def _register(_page, _textbox, tag):
         registered.append(tag)
         if matched(tag):
             typed.append(" ")  # a picked suggestion inserts its own trailing space
@@ -96,7 +96,7 @@ def _run_type_post(monkeypatch, text, matched=lambda tag: True):
 
     monkeypatch.setattr(facebook_browser, "_register_hashtag", _register)
     page = SimpleNamespace(keyboard=_FakeKeyboard(typed))
-    facebook_browser._type_post(page, _FakeTextbox(typed), text)
+    facebook_browser._type_post(page, _FakeTextbox(typed), text)  # pylint: disable=protected-access
     return "".join(t for t in typed if not t.startswith("<")), registered
 
 
