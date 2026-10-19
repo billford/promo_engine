@@ -61,3 +61,54 @@ def test_reminder_mode_skips_browser_and_keeps_photo(monkeypatch, reminders):
 def test_browser_mode_picks_no_photo():
     config = {"facebook_mode": "browser", "photo_db_url": "postgresql://unused"}
     assert _pick_image("facebook", SELECTED, None, config, verbose=False) is None
+
+
+class _FakeKeyboard:
+    def __init__(self, typed):
+        self.typed = typed
+
+    def type(self, text, delay=0):
+        self.typed.append(text)
+
+    def press(self, key):
+        self.typed.append(f"<{key}>")
+
+
+class _FakeTextbox:
+    def __init__(self, typed):
+        self.typed = typed
+
+    def inner_text(self):
+        return "".join(t for t in self.typed if not t.startswith("<"))
+
+
+def _run_type_post(monkeypatch, text, matched=lambda tag: True):
+    import facebook_browser
+
+    typed, registered = [], []
+
+    def _register(page, textbox, tag):
+        registered.append(tag)
+        if matched(tag):
+            typed.append(" ")  # a picked suggestion inserts its own trailing space
+            return True
+        return False
+
+    monkeypatch.setattr(facebook_browser, "_register_hashtag", _register)
+    page = SimpleNamespace(keyboard=_FakeKeyboard(typed))
+    facebook_browser._type_post(page, _FakeTextbox(typed), text)
+    return "".join(t for t in typed if not t.startswith("<")), registered
+
+
+def test_each_hashtag_is_registered_without_doubling_spaces(monkeypatch):
+    out, registered = _run_type_post(monkeypatch, "Read it\nhttps://x.test/a#frag\n#AI #Writing done")
+
+    assert registered == ["#AI", "#Writing"]  # the URL fragment is not a tag
+    assert out == "Read ithttps://x.test/a#frag#AI #Writing done"
+
+
+def test_unmatched_hashtag_stays_plain_text(monkeypatch):
+    out, registered = _run_type_post(monkeypatch, "#Rare #AI", matched=lambda tag: tag == "#AI")
+
+    assert registered == ["#Rare", "#AI"]
+    assert out == "#Rare #AI "
