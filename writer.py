@@ -63,7 +63,9 @@ Requirements:
 - Include the article URL exactly as given above, on its own line before the hashtags,
   introduced by a short lead-in such as "Read it here:". This post is pasted by hand,
   so a post without the link is useless.
-- 3-4 relevant hashtags leaning toward the content's actual topic.
+- 3-4 relevant hashtags leaning toward the content's actual topic. Spell each one out in
+  full, using established tags people already follow: #ArtificialIntelligence, not #AI;
+  #MachineLearning, not #ML. No abbreviations or invented tags.
 - Final line, exactly as written: [Post written by AI Promotion Engine — article is all human]
 - This post will be copy-pasted and posted manually. Write it ready to post as-is.
 - Output the post text only, no surrounding explanation.

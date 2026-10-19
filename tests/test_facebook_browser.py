@@ -101,14 +101,21 @@ def _run_type_post(monkeypatch, text, matched=lambda tag: True):
 
 
 def test_each_hashtag_is_registered_without_doubling_spaces(monkeypatch):
-    out, registered = _run_type_post(monkeypatch, "Read it\nhttps://x.test/a#frag\n#AI #Writing done")
+    out, registered = _run_type_post(monkeypatch, "Read it\nhttps://x.test/a#frag\n#Books #Writing done")
 
-    assert registered == ["#AI", "#Writing"]  # the URL fragment is not a tag
-    assert out == "Read ithttps://x.test/a#frag#AI #Writing done"
+    assert registered == ["#Books", "#Writing"]  # the URL fragment is not a tag
+    assert out == "Read ithttps://x.test/a#frag#Books #Writing done"
 
 
 def test_unmatched_hashtag_stays_plain_text(monkeypatch):
-    out, registered = _run_type_post(monkeypatch, "#Rare #AI", matched=lambda tag: tag == "#AI")
+    out, registered = _run_type_post(monkeypatch, "#Rare #Books", matched=lambda tag: tag == "#Books")
 
-    assert registered == ["#Rare", "#AI"]
-    assert out == "#Rare #AI "
+    assert registered == ["#Rare", "#Books"]
+    assert out == "#Rare #Books "
+
+
+def test_short_tags_are_spelled_out(monkeypatch):
+    out, registered = _run_type_post(monkeypatch, "#AI #ai #Writing")
+
+    assert registered == ["#ArtificialIntelligence", "#ArtificialIntelligence", "#Writing"]
+    assert out == "#ArtificialIntelligence #ArtificialIntelligence #Writing "

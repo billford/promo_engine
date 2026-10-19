@@ -39,6 +39,13 @@ TYPE_DELAY_MS = 25
 # Only tags preceded by whitespace (or line start), so a URL's #fragment is left alone.
 HASHTAG = re.compile(r"(?<!\S)(#\w+)")
 HASHTAG_POPUP_WAIT_MS = 4_000
+# Short tags Facebook never offers as an exact suggestion (#AI only brings up #aiart,
+# #airport, ...), swapped for the spelled-out tag it does offer. Keys are lowercase.
+HASHTAG_EXPANSIONS = {
+    "#ai": "#ArtificialIntelligence",
+    "#ml": "#MachineLearning",
+    "#genai": "#GenerativeAI",
+}
 
 
 class FacebookBrowserError(RuntimeError):
@@ -128,6 +135,7 @@ def _type_post(page, textbox, post_text: str) -> None:
             if not part:
                 continue
             if HASHTAG.fullmatch(part):
+                part = HASHTAG_EXPANSIONS.get(part.lower(), part)
                 page.keyboard.type(part, delay=TYPE_DELAY_MS)
                 spaced = _register_hashtag(page, textbox, part) and textbox.inner_text()[-1:].isspace()
                 continue
