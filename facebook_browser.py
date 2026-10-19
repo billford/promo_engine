@@ -52,21 +52,27 @@ class FacebookBrowserError(RuntimeError):
     """Staging the post in Chrome failed; the caller falls back to a Reminder."""
 
 
-def _devtools_up(port: int) -> bool:
+def _open_pages(port: int) -> int | None:
+    """How many tabs the DevTools Chrome has open, or None if it isn't running."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2) as resp:
-            return "webSocketDebuggerUrl" in json.load(resp)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=2) as resp:
+            return sum(1 for target in json.load(resp) if target.get("type") == "page")
     except (urllib.error.URLError, OSError, ValueError):
-        return False
+        return None
 
 
-def launch_chrome(config: dict, url: str = FACEBOOK_HOME) -> int:
-    """Start (or reuse) the dedicated Chrome instance; return its DevTools port.
+def launch_chrome(config: dict, url: str | None = None) -> tuple[int, bool]:
+    """Start (or reuse) the dedicated Chrome; return (DevTools port, opened_window).
 
-    If yesterday's instance is still running, Chrome hands the new URL to it and the
-    port is already listening.
+    A running instance with windows open is reused as-is, unless a url is given (Chrome
+    then hands that url to it). Otherwise one window is opened, on url or the Facebook
+    home page: by a fresh launch, or by handing the url to an instance left running with
+    every window closed. Playwright can't attach to Chrome while it has no windows, so
+    that case needs one opened either way.
     """
     port = int(config.get("fb_debug_port", 9223))
+    if _open_pages(port) and url is None:
+        return port, False
     profile = config["fb_browser_profile"]
     subprocess.Popen(  # pylint: disable=consider-using-with
         [
@@ -75,7 +81,7 @@ def launch_chrome(config: dict, url: str = FACEBOOK_HOME) -> int:
             f"--remote-debugging-port={port}",
             "--no-first-run",
             "--no-default-browser-check",
-            url,
+            url or FACEBOOK_HOME,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -83,8 +89,8 @@ def launch_chrome(config: dict, url: str = FACEBOOK_HOME) -> int:
     )
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        if _devtools_up(port):
-            return port
+        if _open_pages(port):
+            return port, True
         time.sleep(0.5)
     raise FacebookBrowserError(f"Chrome DevTools port {port} never came up.")
 
@@ -151,11 +157,15 @@ def stage_facebook_post(post_text: str, config: dict) -> None:
     # Imported here so the Reminder fallback still works if Playwright isn't installed.
     from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
-    port = launch_chrome(config)
+    port, opened_window = launch_chrome(config)
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-            page = browser.contexts[0].new_page()
+            context = browser.contexts[0]
+            # If launch_chrome just opened a window, it's the only one; write in it rather
+            # than adding another. Otherwise the open windows may hold an earlier day's
+            # unposted draft, so leave them be and add a tab.
+            page = context.pages[0] if opened_window and context.pages else context.new_page()
             page.set_default_timeout(PAGE_TIMEOUT_MS)
             page.goto(FACEBOOK_HOME, wait_until="domcontentloaded")
             _check_logged_in(page)
@@ -191,7 +201,7 @@ def main() -> None:
     from config import load_config
     config = load_config()
     if args.login:
-        launch_chrome(config)
+        launch_chrome(config, FACEBOOK_HOME)
         print("Sign in to Facebook in the Chrome window that opened (tick 'remember me'), then close it.")
     elif args.test:
         stage_facebook_post(args.test, config)

@@ -119,3 +119,56 @@ def test_short_tags_are_spelled_out(monkeypatch):
 
     assert registered == ["#ArtificialIntelligence", "#ArtificialIntelligence", "#Writing"]
     assert out == "#ArtificialIntelligence #ArtificialIntelligence #Writing "
+
+
+@pytest.fixture()
+def chrome_spawns(monkeypatch):
+    import facebook_browser
+
+    spawned = []
+    monkeypatch.setattr(facebook_browser.subprocess, "Popen", lambda args, **kw: spawned.append(args[-1]))
+    return spawned
+
+
+def _tabs(monkeypatch, *counts):
+    """Successive _open_pages answers: None = Chrome not running, 0 = running, no windows."""
+    import facebook_browser
+
+    answers = iter(counts)
+    monkeypatch.setattr(facebook_browser, "_open_pages", lambda port: next(answers))
+
+
+def test_chrome_with_windows_is_reused_without_a_new_one(monkeypatch, chrome_spawns):
+    import facebook_browser
+
+    _tabs(monkeypatch, 2)
+
+    assert facebook_browser.launch_chrome({"fb_browser_profile": "/p"}) == (9223, False)
+    assert chrome_spawns == []
+
+
+def test_fresh_launch_opens_one_facebook_window(monkeypatch, chrome_spawns):
+    import facebook_browser
+
+    _tabs(monkeypatch, None, None, 1)
+
+    assert facebook_browser.launch_chrome({"fb_browser_profile": "/p"}) == (9223, True)
+    assert chrome_spawns == [facebook_browser.FACEBOOK_HOME]
+
+
+def test_windowless_chrome_gets_one_window(monkeypatch, chrome_spawns):
+    import facebook_browser
+
+    _tabs(monkeypatch, 0, 1)
+
+    assert facebook_browser.launch_chrome({"fb_browser_profile": "/p"}) == (9223, True)
+    assert chrome_spawns == [facebook_browser.FACEBOOK_HOME]
+
+
+def test_login_opens_a_window_even_when_running(monkeypatch, chrome_spawns):
+    import facebook_browser
+
+    _tabs(monkeypatch, 2, 3)
+
+    facebook_browser.launch_chrome({"fb_browser_profile": "/p"}, facebook_browser.FACEBOOK_HOME)
+    assert chrome_spawns == [facebook_browser.FACEBOOK_HOME]
