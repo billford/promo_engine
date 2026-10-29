@@ -41,7 +41,7 @@ COMPOSER_OPENER = re.compile(r"What.s on your mind")
 COMPOSER_SUBMIT = re.compile(r"^(Next|Post)$")
 COMMENT_OPENER = re.compile(r"^(Leave a comment|Comment)$")
 COMMENT_BOX = re.compile(r"Write a comment|Comment as")
-POST_MESSAGE = '[data-ad-preview="message"]'
+POST_MESSAGE = '[data-ad-preview="message"], [data-ad-rendering-role="story_message"]'
 
 PAGE_TIMEOUT_MS = 30_000
 LINK_PREVIEW_WAIT_S = 6
