@@ -41,6 +41,7 @@ COMPOSER_OPENER = re.compile(r"What.s on your mind")
 COMPOSER_SUBMIT = re.compile(r"^(Next|Post)$")
 COMMENT_OPENER = re.compile(r"^(Leave a comment|Comment)$")
 COMMENT_BOX = re.compile(r"Write a comment|Comment as")
+POST_MESSAGE = '[data-ad-preview="message"]'
 
 PAGE_TIMEOUT_MS = 30_000
 LINK_PREVIEW_WAIT_S = 6
@@ -300,7 +301,11 @@ def _comment_fallback(url: str, reason: str) -> None:
 
 def _find_post(page, snippet: str):
     """The newest profile post containing snippet, or None."""
-    post = page.locator('[role="article"], [aria-posinset]').filter(has_text=snippet).first
+    # Profile posts carry no article role, so find the message body by its text and climb
+    # to the nearest container holding that post's own comment button.
+    post = page.locator(POST_MESSAGE).filter(has_text=snippet).first.locator(
+        "xpath=ancestor::div[.//div[@role='button' and @aria-label='Leave a comment']][1]"
+    )
     for attempt in range(POST_FIND_ATTEMPTS):
         if attempt:
             time.sleep(COMMENT_POLL_S)
