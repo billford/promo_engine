@@ -5,7 +5,11 @@ Meta has no API for posting to a personal profile, so this drives the web UI. It
 clicks Post itself: it opens the composer, types the post (text + link), picks each
 hashtag from Facebook's suggestion popup so it registers as a tag, waits for the
 link preview, and leaves the window up with a notification. The human click is the
-final step.
+final step for the post itself.
+
+The article link is kept out of the post, because Facebook shows link posts to fewer
+people. A detached watcher waits for that click, then adds the link as the post's first
+comment. If it can't, it falls back to a notification with the link on the clipboard.
 
 Chrome is launched as a detached process with its own profile and a local DevTools port,
 and Playwright only attaches to it over CDP. That keeps the window open after this
@@ -22,17 +26,21 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 
 CHROME_BIN = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 FACEBOOK_HOME = "https://www.facebook.com/"
+PROFILE_URL = "https://www.facebook.com/me"
 
 # Accessible names rather than CSS classes: Facebook's class names are generated and churn.
 # The apostrophe may be straight or curly, hence the dot.
 COMPOSER_OPENER = re.compile(r"What.s on your mind")
 COMPOSER_SUBMIT = re.compile(r"^(Next|Post)$")
+COMMENT_OPENER = re.compile(r"^(Leave a comment|Comment)$")
+COMMENT_BOX = re.compile(r"Write a comment|Comment as")
 
 PAGE_TIMEOUT_MS = 30_000
 LINK_PREVIEW_WAIT_S = 6
@@ -50,6 +58,13 @@ HASHTAG_EXPANSIONS = {
     "#ml": "#MachineLearning",
     "#genai": "#GenerativeAI",
 }
+# How long the comment watcher waits for the Post click before giving up.
+COMMENT_WATCH_S = 12 * 3600
+COMMENT_POLL_S = 5
+# A just-sent post can take a moment to show on the profile, so reload a few times.
+POST_FIND_ATTEMPTS = 4
+# The post is found on the profile by its opening words, before any "See more" cut.
+MATCH_CHARS = 50
 
 
 class FacebookBrowserError(RuntimeError):
@@ -99,6 +114,13 @@ def launch_chrome(config: dict, url: str | None = None) -> tuple[int, bool]:
     raise FacebookBrowserError(f"Chrome DevTools port {port} never came up.")
 
 
+def _composer_open(context) -> bool:
+    return any(
+        page.get_by_role("dialog").get_by_role("button", name=COMPOSER_SUBMIT).count()
+        for page in context.pages
+    )
+
+
 def _has_unsent_draft(port: int) -> bool:
     """True if any tab has the post composer open. Errs toward True: losing a draft is worse."""
     from playwright.sync_api import Error as PlaywrightError, sync_playwright
@@ -106,10 +128,7 @@ def _has_unsent_draft(port: int) -> bool:
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-            return any(
-                page.get_by_role("dialog").get_by_role("button", name=COMPOSER_SUBMIT).count()
-                for page in browser.contexts[0].pages
-            )
+            return _composer_open(browser.contexts[0])
     except PlaywrightError:
         return True
 
@@ -203,8 +222,12 @@ def _type_post(page, textbox, post_text: str) -> None:
                 page.keyboard.type(part, delay=TYPE_DELAY_MS)
 
 
-def stage_facebook_post(post_text: str, config: dict) -> None:
-    """Open the composer with post_text typed in. Raises FacebookBrowserError on any failure."""
+def stage_facebook_post(post_text: str, config: dict, comment_url: str | None = None) -> None:
+    """Open the composer with post_text typed in. Raises FacebookBrowserError on any failure.
+
+    With comment_url, also starts a watcher that adds it as the first comment once the
+    post is sent.
+    """
     # Imported here so the Reminder fallback still works if Playwright isn't installed.
     from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
@@ -240,14 +263,114 @@ def stage_facebook_post(post_text: str, config: dict) -> None:
     except PlaywrightError as exc:
         raise FacebookBrowserError(f"Playwright: {exc}") from exc
 
-    _notify("Facebook post is ready. Review it and click Post.")
+    if comment_url:
+        _start_comment_watcher(comment_url, post_text)
+        _notify("Facebook post is ready. Review it and click Post; the link goes in the first comment.")
+    else:
+        _notify("Facebook post is ready. Review it and click Post.")
     print("Facebook post staged in Chrome; waiting on a manual click of Post.")
+
+
+def match_text(post_text: str) -> str:
+    """The post's opening words, used to find it on the profile once it's sent."""
+    first_line = next((line.strip() for line in post_text.split("\n") if line.strip()), "")
+    if len(first_line) <= MATCH_CHARS:
+        return first_line
+    return first_line[:MATCH_CHARS].rsplit(" ", 1)[0]
+
+
+def _start_comment_watcher(url: str, post_text: str) -> None:
+    """Run comment_after_post in a detached process, so the daily job doesn't wait on the click."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, os.path.join(here, "facebook_browser.py"),
+         "--comment", url, "--match", match_text(post_text)],
+        cwd=here,
+        start_new_session=True,  # outlives this process and the launchd job
+    )
+    print("Started the Facebook first-comment watcher.")
+
+
+def _comment_fallback(url: str, reason: str) -> None:
+    print(f"WARNING: Facebook first comment not posted ({reason}); link copied for a manual paste.",
+          file=sys.stderr)
+    subprocess.run(["pbcopy"], input=url, text=True, check=False)
+    _notify(f"Couldn't add the Facebook first comment ({reason}). The link is on the clipboard.")
+
+
+def _find_post(page, snippet: str):
+    """The newest profile post containing snippet, or None."""
+    post = page.locator('[role="article"], [aria-posinset]').filter(has_text=snippet).first
+    for attempt in range(POST_FIND_ATTEMPTS):
+        if attempt:
+            time.sleep(COMMENT_POLL_S)
+        page.goto(PROFILE_URL, wait_until="domcontentloaded")
+        try:
+            post.wait_for(timeout=PAGE_TIMEOUT_MS / 2)
+            return post
+        except Exception:  # pylint: disable=broad-except
+            continue  # not rendered yet; reload and look again
+    return None
+
+
+def comment_after_post(url: str, snippet: str, config: dict) -> None:
+    """Wait for the staged post to be sent, then add url as its first comment.
+
+    Every failure, from the composer never being sent to a changed layout, ends in the
+    clipboard-and-notification fallback, so the link always reaches the user one way or
+    the other.
+    """
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
+
+    port = int(config.get("fb_debug_port", 9223))
+    deadline = time.monotonic() + COMMENT_WATCH_S
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            context = browser.contexts[0]
+            while _composer_open(context):
+                if time.monotonic() > deadline:
+                    _comment_fallback(url, "the post was never sent")
+                    return
+                time.sleep(COMMENT_POLL_S)
+
+            page = context.new_page()
+            page.set_default_timeout(PAGE_TIMEOUT_MS)
+            post = _find_post(page, snippet)
+            if post is None:
+                page.close()
+                _comment_fallback(url, "the post isn't on the profile; was it discarded?")
+                return
+            post.get_by_role("button", name=COMMENT_OPENER).first.click()
+            # Clicking Comment opens the box inline, or the whole post in a dialog.
+            box = post.get_by_role("textbox", name=COMMENT_BOX).or_(
+                page.get_by_role("dialog").get_by_role("textbox", name=COMMENT_BOX)
+            ).first
+            box.click()
+            page.keyboard.type(url, delay=TYPE_DELAY_MS)
+            page.keyboard.press("Enter")
+            # The box clears once Facebook takes the comment.
+            deadline = time.monotonic() + PAGE_TIMEOUT_MS / 1000
+            while box.inner_text().strip() and time.monotonic() < deadline:
+                time.sleep(0.5)
+            if box.inner_text().strip():
+                _comment_fallback(url, "the comment box didn't submit")
+                return
+            page.close()
+    except PlaywrightError as exc:
+        _comment_fallback(url, f"Playwright: {exc}")
+        return
+
+    _notify("Link added as the Facebook post's first comment.")
+    print("Posted the Facebook first comment.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Facebook browser helper")
     parser.add_argument("--login", action="store_true", help="Open the promo_engine Chrome profile to sign in")
     parser.add_argument("--test", metavar="TEXT", help="Stage TEXT in the composer (won't post)")
+    parser.add_argument("--comment", metavar="URL", help="After the staged post is sent, comment URL on it")
+    parser.add_argument("--match", metavar="TEXT", help="With --comment: opening words of the post")
     args = parser.parse_args()
 
     from config import load_config
@@ -255,6 +378,8 @@ def main() -> None:
     if args.login:
         launch_chrome(config, FACEBOOK_HOME)
         print("Sign in to Facebook in the Chrome window that opened (tick 'remember me'), then close it.")
+    elif args.comment and args.match:
+        comment_after_post(args.comment, args.match, config)
     elif args.test:
         stage_facebook_post(args.test, config)
     else:

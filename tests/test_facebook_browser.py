@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from main import _pick_image, _post_facebook
-from facebook_browser import FacebookBrowserError
+from facebook_browser import FacebookBrowserError, match_text
 
-SELECTED = {"title": "An article", "content_id": "http://example.com/a"}
+SELECTED = {"title": "An article", "content_id": "http://example.com/a", "url": "http://example.com/a"}
 
 
 @pytest.fixture()
@@ -15,8 +15,8 @@ def reminders(monkeypatch):
     """Stub the macOS-only facebook module so the fallback is observable anywhere."""
     calls = []
     fake = types.ModuleType("facebook")
-    fake.create_facebook_reminder = lambda title, text, config, image_path=None: calls.append(
-        (title, text, image_path)
+    fake.create_facebook_reminder = lambda title, text, config, image_path=None, comment_url=None: calls.append(
+        (title, text, image_path, comment_url)
     )
     monkeypatch.setitem(sys.modules, "facebook", fake)
     return calls
@@ -24,29 +24,32 @@ def reminders(monkeypatch):
 
 def test_browser_mode_stages_post_without_reminder(monkeypatch, reminders):
     staged = []
-    monkeypatch.setattr("facebook_browser.stage_facebook_post", lambda text, config: staged.append(text))
+    monkeypatch.setattr(
+        "facebook_browser.stage_facebook_post",
+        lambda text, config, comment_url=None: staged.append((text, comment_url)),
+    )
 
-    used = _post_facebook(SELECTED, "hello https://x.test", None, {"facebook_mode": "browser"})
+    used = _post_facebook(SELECTED, "hello", None, {"facebook_mode": "browser"})
 
-    assert staged == ["hello https://x.test"]
+    assert staged == [("hello", "http://example.com/a")]
     assert reminders == []
     assert used is None
 
 
 def test_browser_failure_falls_back_to_reminder(monkeypatch, reminders, capsys):
-    def _fail(text, config):
+    def _fail(text, config, comment_url=None):
         raise FacebookBrowserError("Not logged in")
 
     monkeypatch.setattr("facebook_browser.stage_facebook_post", _fail)
 
     _post_facebook(SELECTED, "hello", None, {"facebook_mode": "browser"})
 
-    assert reminders == [("An article", "hello", None)]
+    assert reminders == [("An article", "hello", None, "http://example.com/a")]
     assert "browser staging failed" in capsys.readouterr().err
 
 
 def test_reminder_mode_skips_browser_and_keeps_photo(monkeypatch, reminders):
-    def _boom(text, config):
+    def _boom(text, config, comment_url=None):
         raise AssertionError("browser must not run in reminder mode")
 
     monkeypatch.setattr("facebook_browser.stage_facebook_post", _boom)
@@ -54,13 +57,19 @@ def test_reminder_mode_skips_browser_and_keeps_photo(monkeypatch, reminders):
 
     used = _post_facebook(SELECTED, "hello", image, {"facebook_mode": "reminder"})
 
-    assert reminders == [("An article", "hello", "/tmp/p.jpg")]
+    assert reminders == [("An article", "hello", "/tmp/p.jpg", "http://example.com/a")]
     assert used is image
 
 
 def test_browser_mode_picks_no_photo():
     config = {"facebook_mode": "browser", "photo_db_url": "postgresql://unused"}
     assert _pick_image("facebook", SELECTED, None, config, verbose=False) is None
+
+
+def test_match_text_is_the_opening_words_of_the_first_line():
+    assert match_text("\nShort opener.\n\nMore text") == "Short opener."
+    long_line = "Every quiet morning in the archive turns up something worth a second look"
+    assert match_text(long_line) == "Every quiet morning in the archive turns up"
 
 
 class _FakeKeyboard:

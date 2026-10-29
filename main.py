@@ -84,7 +84,7 @@ def _post_facebook(selected: dict, post_text: str, image, config: dict):
     if _facebook_uses_browser(config):
         from facebook_browser import stage_facebook_post
         try:
-            stage_facebook_post(post_text, config)
+            stage_facebook_post(post_text, config, comment_url=selected["url"])
             return None
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # Anything from a Facebook layout change to a missing Playwright install:
@@ -92,7 +92,10 @@ def _post_facebook(selected: dict, post_text: str, image, config: dict):
             print(f"WARNING [facebook]: browser staging failed, creating a Reminder instead: {exc}",
                   file=sys.stderr)
     from facebook import create_facebook_reminder
-    create_facebook_reminder(selected["title"], post_text, config, image_path=image.path if image else None)
+    create_facebook_reminder(
+        selected["title"], post_text, config,
+        image_path=image.path if image else None, comment_url=selected["url"],
+    )
     return image
 
 

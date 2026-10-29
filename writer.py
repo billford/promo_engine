@@ -48,7 +48,6 @@ Write a brief Facebook intro to this piece of content.
 
 Content title: {title}
 Source: {source}
-URL: {url}
 Description: {description}
 
 Requirements:
@@ -60,9 +59,7 @@ Requirements:
 - Gentle hype only, and only the kind the piece earns: surface a specific hook from it and let that do the persuading. Never inflate. No "mind-blowing," "everyone should read this," "you have to see this," or similar.
 - Vary the structure. Could open with what the piece covers, a question it answers, a surprising detail from it, or a direct statement of the topic.
 - 100-200 words total.
-- Include the article URL exactly as given above, on its own line before the hashtags,
-  introduced by a short lead-in such as "Read it here:". This post is pasted by hand,
-  so a post without the link is useless.
+- No link in the post body, it will go in the first comment.
 - 3-4 relevant hashtags leaning toward the content's actual topic. Spell each one out in
   full, using established tags people already follow: #ArtificialIntelligence, not #AI;
   #MachineLearning, not #ML. No abbreviations or invented tags.
@@ -95,37 +92,20 @@ Requirements:
 BLUESKY_LIMIT = 300  # Bluesky's actual ceiling; the prompt asks for 280 to leave headroom
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+")
-_ATTRIBUTION_PREFIX = "[Post written by AI Promotion Engine"
 
 
-def _links_to_article(text: str, url: str) -> bool:
-    """True if the draft already links the article, under any equivalent URL variant."""
-    target = canonical_content_id(url)
-    return any(
-        canonical_content_id(found.rstrip(".,);:")) == target
-        for found in _URL_RE.findall(text)
-    )
+def _drop_link(text: str, url: str) -> str:
+    """Remove any line linking the article; the link goes in the first comment instead.
 
-
-def _ensure_link(text: str, url: str) -> str:
-    """Guarantee the article URL is in the body.
-
-    The prompt asks for it, but the model only reliably volunteered one under the older
-    conversational framing; the neutral-summary rewrite started producing posts that
-    ended with "Read the full piece on Medium" and no link at all. A Facebook post is
-    copy-pasted by hand, so a missing link makes the whole post dead weight.
+    Facebook shows link posts to fewer people, so the post body has to stay link-free
+    even if the model adds the URL anyway.
     """
-    if _links_to_article(text, url):
-        return text
-
-    lines = text.rstrip().split("\n")
-    for i in range(len(lines) - 1, -1, -1):
-        if lines[i].lstrip().startswith(_ATTRIBUTION_PREFIX):
-            # The attribution line has to stay last, so slot the link in above it.
-            lines[i:i] = ["Read it here: " + url, ""]
-            return "\n".join(lines)
-
-    return text.rstrip() + "\n\nRead it here: " + url
+    target = canonical_content_id(url)
+    kept = [
+        line for line in text.split("\n")
+        if not any(canonical_content_id(found.rstrip(".,);:")) == target for found in _URL_RE.findall(line))
+    ]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
 
 
 def _enforce_bluesky_limit(text: str, url: str) -> str:
@@ -186,7 +166,7 @@ def write_post(content: dict, config: dict, platform: str) -> str:
     text = response.content[0].text.strip()
 
     if platform == "facebook":
-        text = _ensure_link(text, content["url"])
+        text = _drop_link(text, content["url"])
 
     if platform == "bluesky":
         text = _enforce_bluesky_limit(text, content["url"])

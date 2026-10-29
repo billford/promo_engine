@@ -299,9 +299,16 @@ mode, where the Reminder links the prepared file to attach by hand (see below). 
 ## Facebook
 
 Meta has no API for posting to a personal profile, so by default (`FACEBOOK_MODE=browser`)
-the daily run **stages** the post in Chrome: it opens the composer, types the text and
-link, waits for the link preview, and pops a notification. **You click Post.** Nothing is
-published without that click. The run doesn't wait for you; the window just stays open.
+the daily run **stages** the post in Chrome: it opens the composer, types the text, and
+pops a notification. **You click Post.** The post isn't published without that click. The
+run doesn't wait for you; the window just stays open.
+
+The article link stays out of the post, because Facebook shows link posts to fewer people.
+Instead, a detached watcher (`facebook_browser.py --comment`) waits up to 12 hours for your
+click, finds the new post on your profile by its opening words, and **submits the link as
+its first comment on its own**. If anything goes wrong (the post was discarded, the layout
+changed, Chrome quit), it copies the link to the clipboard and notifies you to paste it by
+hand. The Reminder fallback lists the link under "First comment:" in its notes.
 
 One-time setup: sign in once in the dedicated Chrome profile (it's kept outside the repo,
 under `~/Library/Application Support/promo_engine/`):
@@ -318,9 +325,11 @@ still reaches you. `FACEBOOK_MODE=reminder` skips the browser entirely.
 Worth knowing:
 
 - **Automating Facebook is against Meta's terms.** A person clicking Post, once a day, from
-  your own Chrome keeps the risk low, but a checkpoint or temporary lock is possible.
-- **It will break sometimes.** The composer is found by its accessible labels ("What's on
-  your mind", "Post"), which assumes an English UI. When it breaks, you get the Reminder.
+  your own Chrome keeps the risk low, but a checkpoint or temporary lock is possible. The
+  automatic first comment is a step past that: it's published without a click.
+- **It will break sometimes.** The composer and comment box are found by their accessible
+  labels ("What's on your mind", "Post", "Write a comment"), which assumes an English UI.
+  When staging breaks, you get the Reminder; when commenting breaks, the clipboard fallback.
 - **The staging Chrome listens on a local DevTools port** (`FB_DEBUG_PORT`, default 9223)
   while it's open, and any local process can drive it through that port. Quit that Chrome
   when you're done if that bothers you; the next run relaunches it.
@@ -356,7 +365,7 @@ promo_engine/
 ├── images.py                      # Picks a photo from Negative Space for a post
 ├── publora.py                     # Publora API: schedules posts
 ├── bluesky.py                     # Bluesky: posts directly
-├── facebook_browser.py            # Facebook: stages the post in Chrome for a manual click
+├── facebook_browser.py            # Facebook: stages the post for a manual click, then comments the link
 ├── facebook.py                    # Facebook: Apple Reminder fallback
 ├── health.py                      # Post-run invariant checks
 ├── db.py                          # SQLite state management

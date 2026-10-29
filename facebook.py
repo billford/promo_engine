@@ -6,11 +6,12 @@ import EventKit  # pylint: disable=import-error
 from Foundation import NSDate, NSCalendar, NSURL  # pylint: disable=import-error,no-name-in-module
 
 
-def create_facebook_reminder(title: str, post_text: str, config: dict, image_path=None) -> None:
+def create_facebook_reminder(title: str, post_text: str, config: dict, image_path=None, comment_url=None) -> None:
     """Create an Apple Reminder with the Facebook post text for manual posting.
 
     Reminders can't hold attachments, so a chosen photo goes in as a clickable file URL
-    plus its path in the notes.
+    plus its path in the notes. The article link goes below the post, to paste as the
+    first comment.
     """
     list_name = config.get("reminders_list", "Social Posts")
     tz = ZoneInfo(config.get("timezone", "America/New_York"))
@@ -57,11 +58,13 @@ def create_facebook_reminder(title: str, post_text: str, config: dict, image_pat
     reminder_title = f"Post to Facebook: {title}"
     reminder = EventKit.EKReminder.reminderWithEventStore_(store)
     reminder.setTitle_(reminder_title)
+    notes = post_text
+    if comment_url:
+        notes += f"\n\nFirst comment: {comment_url}"
     if image_path:
-        reminder.setNotes_(f"{post_text}\n\nPhoto to attach: {image_path}")
+        notes += f"\n\nPhoto to attach: {image_path}"
         reminder.setURL_(NSURL.fileURLWithPath_(str(image_path)))
-    else:
-        reminder.setNotes_(post_text)
+    reminder.setNotes_(notes)
     reminder.setCalendar_(target_cal)
     reminder.setPriority_(5)
 

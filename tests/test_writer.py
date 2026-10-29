@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from writer import BLUESKY_LIMIT, _enforce_bluesky_limit, _ensure_link, write_post
+from writer import BLUESKY_LIMIT, _enforce_bluesky_limit, _drop_link, write_post
 
 
 def test_bluesky_limit_under_280_unchanged():
@@ -74,50 +74,34 @@ def test_write_post_adds_ai_promoted_if_missing(mock_cls):
 ATTRIBUTION = "[Post written by AI Promotion Engine — article is all human]"
 
 
-def test_ensure_link_leaves_post_that_already_links_alone():
-    url = "https://medium.com/@billfordx/the-call-6455ab0611e2"
-    text = f"A summary.\n\nRead it here: {url}\n\n#Tag\n\n{ATTRIBUTION}"
-    assert _ensure_link(text, url) == text
+def test_drop_link_leaves_link_free_post_alone():
+    text = f"A summary.\n\n#Tag\n\n{ATTRIBUTION}"
+    assert _drop_link(text, "https://medium.com/@billfordx/the-call-6455ab0611e2") == text
 
 
-def test_ensure_link_accepts_an_equivalent_url_variant():
-    """Same article under a different Medium host is still a working link."""
-    stored = "https://billfordx.medium.com/the-call-6455ab0611e2?source=rss-x"
-    in_post = "https://medium.com/@billfordx/the-call-6455ab0611e2"
-    text = f"A summary. {in_post}\n\n{ATTRIBUTION}"
-    assert _ensure_link(text, stored) == text
+def test_drop_link_removes_an_equivalent_url_variant_and_its_lead_in():
+    stored = "https://medium.com/@billfordx/the-call-6455ab0611e2"
+    in_post = "https://billfordx.medium.com/the-call-6455ab0611e2?source=rss-abc"
+    text = f"A summary.\n\nRead it here: {in_post}\n\n#Tag\n\n{ATTRIBUTION}"
+    assert _drop_link(text, stored) == f"A summary.\n\n#Tag\n\n{ATTRIBUTION}"
 
 
-def test_ensure_link_inserts_above_attribution_line():
-    url = "https://medium.com/@billfordx/the-call-6455ab0611e2"
-    text = f"A summary.\n\nRead the full piece on Medium.\n\n#Tag\n\n{ATTRIBUTION}"
-    result = _ensure_link(text, url)
-    assert url in result
-    assert result.rstrip().endswith(ATTRIBUTION)
-    assert result.index(url) < result.index(ATTRIBUTION)
-
-
-def test_ensure_link_appends_when_no_attribution_line():
-    url = "https://medium.com/@billfordx/the-call-6455ab0611e2"
-    result = _ensure_link("A summary with no link.", url)
-    assert result.endswith(url)
+def test_drop_link_keeps_lines_linking_elsewhere():
+    text = "See https://example.com/other for context."
+    assert _drop_link(text, "https://medium.com/@billfordx/the-call-6455ab0611e2") == text
 
 
 @patch("writer.anthropic.Anthropic")
-def test_write_post_facebook_always_carries_the_link(mock_cls):
-    """The neutral-summary prompt stopped volunteering a URL; Facebook posts are pasted by hand."""
+def test_write_post_facebook_keeps_the_link_out_of_the_body(mock_cls):
+    """Facebook demotes link posts; the URL goes in the first comment instead."""
+    url = "https://medium.com/@billfordx/the-call-6455ab0611e2"
     mock_client = MagicMock()
     mock_cls.return_value = mock_client
     mock_client.messages.create.return_value = MagicMock(
-        content=[MagicMock(text=f"A summary.\n\nRead the full piece on Medium.\n\n#Tag\n\n{ATTRIBUTION}")]
+        content=[MagicMock(text=f"A summary.\n\nRead it here: {url}\n\n#Tag\n\n{ATTRIBUTION}")]
     )
 
-    content = {
-        "title": "Test",
-        "source": "medium",
-        "url": "https://medium.com/@billfordx/the-call-6455ab0611e2",
-        "description": "desc",
-    }
+    content = {"title": "Test", "source": "medium", "url": url, "description": "desc"}
     result = write_post(content, {"anthropic_api_key": "key"}, "facebook")
-    assert content["url"] in result
+    assert url not in result
     assert result.rstrip().endswith(ATTRIBUTION)
