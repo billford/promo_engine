@@ -62,8 +62,11 @@ HASHTAG_EXPANSIONS = {
 # How long the comment watcher waits for the Post click before giving up.
 COMMENT_WATCH_S = 12 * 3600
 COMMENT_POLL_S = 5
-# A just-sent post can take a moment to show on the profile, so reload a few times.
-POST_FIND_ATTEMPTS = 4
+# A just-sent post can take several reloads to show on the profile (four or five, in
+# practice), so keep reloading for several minutes before giving up.
+POST_FIND_ATTEMPTS = 12
+POST_FIND_DELAY_S = 20
+POST_FIND_WAIT_MS = 10_000
 # The post is found on the profile by its opening words, before any "See more" cut.
 MATCH_CHARS = 50
 
@@ -308,10 +311,11 @@ def _find_post(page, snippet: str):
     )
     for attempt in range(POST_FIND_ATTEMPTS):
         if attempt:
-            time.sleep(COMMENT_POLL_S)
+            time.sleep(POST_FIND_DELAY_S)
         page.goto(PROFILE_URL, wait_until="domcontentloaded")
         try:
-            post.wait_for(timeout=PAGE_TIMEOUT_MS / 2)
+            post.wait_for(timeout=POST_FIND_WAIT_MS)
+            print(f"Found the Facebook post on profile load {attempt + 1}.")
             return post
         except Exception:  # pylint: disable=broad-except
             continue  # not rendered yet; reload and look again
