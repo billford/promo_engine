@@ -1,3 +1,4 @@
+import signal
 import sys
 import types
 from types import SimpleNamespace
@@ -180,18 +181,61 @@ def chrome_kills(monkeypatch):
 
     killed = []
     monkeypatch.setattr(facebook_browser, "_chrome_pid", lambda profile: 4242)
-    monkeypatch.setattr(facebook_browser.os, "kill", lambda pid, sig: killed.append(pid))
+    monkeypatch.setattr(facebook_browser.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(facebook_browser, "_process_alive", lambda pid: False)
     return killed
 
 
 def test_idle_chrome_is_restarted(monkeypatch, chrome_kills):
     import facebook_browser
 
-    _tabs(monkeypatch, 2, None)  # two tabs, then gone after the quit
+    _tabs(monkeypatch, 2)
     monkeypatch.setattr(facebook_browser, "_has_unsent_draft", lambda port: False)
 
     facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
-    assert chrome_kills == [4242]
+    assert chrome_kills == [(4242, signal.SIGTERM)]
+
+
+def test_restart_waits_for_the_old_chrome_process_to_exit(monkeypatch, chrome_kills):
+    import facebook_browser
+
+    _tabs(monkeypatch, 2)  # the port isn't asked again; only the process exiting ends the wait
+    monkeypatch.setattr(facebook_browser, "_has_unsent_draft", lambda port: False)
+    monkeypatch.setattr(facebook_browser.time, "sleep", lambda s: None)
+    checks = []
+    monkeypatch.setattr(facebook_browser, "_process_alive", lambda pid: checks.append(pid) or len(checks) < 4)
+
+    facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
+    assert chrome_kills == [(4242, signal.SIGTERM)]
+    assert len(checks) == 4
+
+
+def test_chrome_ignoring_a_normal_quit_is_force_killed(monkeypatch, chrome_kills):
+    import facebook_browser
+
+    _tabs(monkeypatch, 2)
+    monkeypatch.setattr(facebook_browser, "_has_unsent_draft", lambda port: False)
+    monkeypatch.setattr(facebook_browser, "CHROME_QUIT_TIMEOUT_S", 0)
+    monkeypatch.setattr(
+        facebook_browser, "_process_alive", lambda pid: (pid, signal.SIGKILL) not in chrome_kills
+    )
+
+    facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
+    assert chrome_kills == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
+
+
+def test_restart_gives_up_when_chrome_survives_a_force_kill(monkeypatch, chrome_kills):
+    import facebook_browser
+
+    _tabs(monkeypatch, 2)
+    monkeypatch.setattr(facebook_browser, "_has_unsent_draft", lambda port: False)
+    monkeypatch.setattr(facebook_browser, "_process_alive", lambda pid: True)
+    monkeypatch.setattr(facebook_browser, "CHROME_QUIT_TIMEOUT_S", 0)
+    monkeypatch.setattr(facebook_browser, "CHROME_KILL_TIMEOUT_S", 0)
+
+    with pytest.raises(FacebookBrowserError, match="survived a force-kill"):
+        facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
+    assert chrome_kills == [(4242, signal.SIGTERM), (4242, signal.SIGKILL)]
 
 
 def test_chrome_with_unsent_draft_is_left_running(monkeypatch, chrome_kills):
@@ -207,7 +251,7 @@ def test_chrome_with_unsent_draft_is_left_running(monkeypatch, chrome_kills):
 def test_windowless_chrome_is_restarted_without_a_draft_check(monkeypatch, chrome_kills):
     import facebook_browser
 
-    _tabs(monkeypatch, 0, None)
+    _tabs(monkeypatch, 0)
 
     def _no_check(port):
         raise AssertionError("Playwright can't attach to a windowless Chrome")
@@ -215,7 +259,7 @@ def test_windowless_chrome_is_restarted_without_a_draft_check(monkeypatch, chrom
     monkeypatch.setattr(facebook_browser, "_has_unsent_draft", _no_check)
 
     facebook_browser.restart_idle_chrome({"fb_browser_profile": "/p"})
-    assert chrome_kills == [4242]
+    assert chrome_kills == [(4242, signal.SIGTERM)]
 
 
 def test_nothing_to_restart_when_chrome_is_down(monkeypatch, chrome_kills):

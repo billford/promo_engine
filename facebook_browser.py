@@ -35,6 +35,9 @@ COMPOSER_OPENER = re.compile(r"What.s on your mind")
 COMPOSER_SUBMIT = re.compile(r"^(Next|Post)$")
 
 PAGE_TIMEOUT_MS = 30_000
+# A normal quit often hangs, so it gets this long before the process is force-killed.
+CHROME_QUIT_TIMEOUT_S = 10
+CHROME_KILL_TIMEOUT_S = 5
 LINK_PREVIEW_WAIT_S = 6
 # Per-keystroke delay. Typing (rather than filling) is what makes Facebook's editor
 # notice the URL and build the link preview.
@@ -124,6 +127,25 @@ def _chrome_pid(profile: str) -> int | None:
     return None
 
 
+def _process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, but owned by someone else
+    return True
+
+
+def _wait_for_exit(pid: int, timeout_s: float) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if not _process_alive(pid):
+            return True
+        time.sleep(0.5)
+    return not _process_alive(pid)
+
+
 def restart_idle_chrome(config: dict) -> None:
     """Quit the dedicated Chrome if it's running with no unsent post, freeing its memory.
 
@@ -140,10 +162,16 @@ def restart_idle_chrome(config: dict) -> None:
     pid = _chrome_pid(config["fb_browser_profile"])
     if pid is None:
         return
+    # Wait for the process itself, not its DevTools port: the port closes early in
+    # shutdown, and a Chrome launched while the old one is still exiting hands its
+    # window to it and quits, so the new port never comes up.
     os.kill(pid, signal.SIGTERM)  # Chrome treats SIGTERM as a normal quit
-    deadline = time.monotonic() + 15
-    while time.monotonic() < deadline and _open_pages(port) is not None:
-        time.sleep(0.5)
+    if _wait_for_exit(pid, CHROME_QUIT_TIMEOUT_S):
+        return
+    print(f"Chrome (pid {pid}) ignored a normal quit; force-killing it.")
+    os.kill(pid, signal.SIGKILL)  # leaves a stale profile lock, which the next launch clears
+    if not _wait_for_exit(pid, CHROME_KILL_TIMEOUT_S):
+        raise FacebookBrowserError(f"Chrome (pid {pid}) survived a force-kill.")
 
 
 def _notify(message: str) -> None:
