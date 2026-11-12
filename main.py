@@ -4,7 +4,16 @@ import sys
 from zoneinfo import ZoneInfo
 
 from config import load_config
-from db import init_db, get_conn, insert_post_record, has_posted_today
+from db import (
+    DELIVERY_CHROME,
+    DELIVERY_REMINDER_FALLBACK,
+    get_conn,
+    get_todays_fallback,
+    has_posted_today,
+    init_db,
+    insert_post_record,
+    mark_delivered_in_chrome,
+)
 
 # LinkedIn stays text-only until Publora's media upload is wired in.
 IMAGE_PLATFORMS = {"bluesky", "facebook"}
@@ -80,12 +89,16 @@ def _facebook_uses_browser(config: dict) -> bool:
 
 
 def _post_facebook(selected: dict, post_text: str, image, config: dict):
-    """Stage the post in Chrome, falling back to a Reminder. Returns the image actually used."""
+    """Stage the post in Chrome, falling back to a Reminder.
+
+    Returns (image actually used, delivery). delivery is DELIVERY_REMINDER_FALLBACK only
+    when Chrome was meant to be used and failed, so a re-run knows to retry it.
+    """
     if _facebook_uses_browser(config):
         from facebook_browser import stage_facebook_post
         try:
             stage_facebook_post(post_text, config)
-            return None
+            return None, DELIVERY_CHROME
         except Exception as exc:  # pylint: disable=broad-exception-caught
             # Anything from a Facebook layout change to a missing Playwright install:
             # the post still has to reach the user, so hand it over the old way.
@@ -93,7 +106,22 @@ def _post_facebook(selected: dict, post_text: str, image, config: dict):
                   file=sys.stderr)
     from facebook import create_facebook_reminder
     create_facebook_reminder(selected["title"], post_text, config, image_path=image.path if image else None)
-    return image
+    return image, DELIVERY_REMINDER_FALLBACK if _facebook_uses_browser(config) else None
+
+
+def _retry_facebook_fallback(conn, post_id: int, post_text: str, config: dict) -> None:
+    """Stage today's already-chosen post in Chrome after the earlier attempt fell back to
+    a Reminder. Same text, no new pick. A second failure leaves the Reminder standing."""
+    from facebook_browser import stage_facebook_post
+    print("\nRetrying facebook: today's post fell back to a Reminder; staging it in Chrome.")
+    try:
+        stage_facebook_post(post_text, config)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        print(f"WARNING [facebook]: Chrome staging failed again, today's Reminder still stands: {exc}",
+              file=sys.stderr)
+        return
+    mark_delivered_in_chrome(conn, post_id)
+    print("Once it's posted, delete today's Facebook Reminder so it isn't posted twice.")
 
 
 def _print_preview(platform: str, post_text: str, config: dict, tz: ZoneInfo, dry_run: bool) -> None:
@@ -116,6 +144,11 @@ def _print_preview(platform: str, post_text: str, config: dict, tz: ZoneInfo, dr
 
 def run_platform(platform: str, conn, config: dict, args) -> None:
     tz = ZoneInfo(config.get("timezone", "America/New_York"))
+    if not args.dry_run and platform == "facebook" and _facebook_uses_browser(config):
+        fallback = get_todays_fallback(conn, platform, tz)
+        if fallback:
+            _retry_facebook_fallback(conn, *fallback, config)
+            return
     if not args.dry_run and has_posted_today(conn, platform, tz):
         # A retry of the whole invocation (run_with_retry.sh) must not repost the
         # platforms that already succeeded on the earlier attempt.
@@ -187,13 +220,14 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
         )
 
     elif platform == "facebook":
-        used_image = _post_facebook(selected, post_text, image, config)
+        used_image, delivery = _post_facebook(selected, post_text, image, config)
         insert_post_record(
             conn,
             content_id=selected["content_id"],
             platform=platform,
             post_text=post_text,
             image_id=used_image.photo_id if used_image else None,
+            delivery=delivery,
         )
 
 

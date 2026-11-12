@@ -27,11 +27,12 @@ def test_browser_mode_stages_post_without_reminder(monkeypatch, reminders):
     staged = []
     monkeypatch.setattr("facebook_browser.stage_facebook_post", lambda text, config: staged.append(text))
 
-    used = _post_facebook(SELECTED, "hello https://x.test", None, {"facebook_mode": "browser"})
+    used, delivery = _post_facebook(SELECTED, "hello https://x.test", None, {"facebook_mode": "browser"})
 
     assert staged == ["hello https://x.test"]
     assert reminders == []
     assert used is None
+    assert delivery == "chrome"
 
 
 def test_browser_failure_falls_back_to_reminder(monkeypatch, reminders, capsys):
@@ -53,10 +54,11 @@ def test_reminder_mode_skips_browser_and_keeps_photo(monkeypatch, reminders):
     monkeypatch.setattr("facebook_browser.stage_facebook_post", _boom)
     image = SimpleNamespace(path="/tmp/p.jpg", photo_id=7)
 
-    used = _post_facebook(SELECTED, "hello", image, {"facebook_mode": "reminder"})
+    used, delivery = _post_facebook(SELECTED, "hello", image, {"facebook_mode": "reminder"})
 
     assert reminders == [("An article", "hello", "/tmp/p.jpg")]
     assert used is image
+    assert delivery is None
 
 
 def test_browser_mode_picks_no_photo():

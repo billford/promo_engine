@@ -284,6 +284,7 @@ def init_db(db_path: str) -> None:
             "ALTER TABLE content ADD COLUMN fetch_attempts INTEGER DEFAULT 0",
             "ALTER TABLE content ADD COLUMN content_kind TEXT DEFAULT 'article'",
             "ALTER TABLE post_history ADD COLUMN image_id INTEGER",
+            "ALTER TABLE post_history ADD COLUMN delivery TEXT",
         ]:
             try:
                 conn.execute(alter)
@@ -565,7 +566,12 @@ def mark_comment_done(conn: sqlite3.Connection, comment_id: int) -> None:
     conn.execute("UPDATE pending_comments SET done = 1 WHERE id = ?", (comment_id,))
 
 
-def insert_post_record(
+DELIVERY_CHROME = "chrome"
+# The browser path failed and the post went out as a Reminder instead; a re-run retries Chrome.
+DELIVERY_REMINDER_FALLBACK = "reminder_fallback"
+
+
+def insert_post_record(  # pylint: disable=too-many-arguments
     conn: sqlite3.Connection,
     content_id: str,
     platform: str,
@@ -574,12 +580,17 @@ def insert_post_record(
     scheduled_for: str | None = None,
     dry_run: bool = False,
     image_id: int | None = None,
+    *,
+    delivery: str | None = None,
 ) -> None:
+    """delivery records how a post reached the user when that can vary (Facebook:
+    DELIVERY_CHROME or DELIVERY_REMINDER_FALLBACK); None for platforms that post directly."""
     conn.execute(
         """
         INSERT INTO post_history
-            (content_id, platform, posted_at, post_text, publora_post_id, scheduled_for, dry_run, image_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (content_id, platform, posted_at, post_text, publora_post_id, scheduled_for, dry_run, image_id,
+             delivery)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             content_id,
@@ -590,6 +601,7 @@ def insert_post_record(
             scheduled_for,
             1 if dry_run else 0,
             image_id,
+            delivery,
         ),
     )
 
@@ -627,3 +639,27 @@ def has_posted_today(conn: sqlite3.Connection, platform: str, tz: ZoneInfo) -> b
         (platform, day_start.astimezone(timezone.utc).isoformat()),
     ).fetchone()
     return row is not None
+
+
+def get_todays_fallback(conn: sqlite3.Connection, platform: str, tz: ZoneInfo) -> tuple[int, str] | None:
+    """(id, post_text) of today's live post for platform if it fell back to a Reminder, else None."""
+    day_start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    row = conn.execute(
+        """
+        SELECT id, post_text FROM post_history
+        WHERE platform = ? AND dry_run = 0 AND posted_at >= ? AND delivery = ?
+        ORDER BY posted_at DESC
+        LIMIT 1
+        """,
+        (platform, day_start.astimezone(timezone.utc).isoformat(), DELIVERY_REMINDER_FALLBACK),
+    ).fetchone()
+    return (row[0], row[1]) if row else None
+
+
+def mark_delivered_in_chrome(conn: sqlite3.Connection, post_id: int) -> None:
+    """Record that a fallback post was staged in Chrome after all. Chrome staging carries
+    no photo, so the Reminder's photo no longer counts as used."""
+    conn.execute(
+        "UPDATE post_history SET delivery = ?, image_id = NULL WHERE id = ?",
+        (DELIVERY_CHROME, post_id),
+    )
