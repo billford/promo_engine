@@ -17,6 +17,9 @@ writing, and a reason to go read it.
 - Third person or no person at all. Never write as the author, and never invent
   opinions, memories, or first-person claims.
 - No sales pitch, no clickbait, no all-caps, no "you won't believe."
+- Never give away the ending. For fiction and personal stories, set up the premise and the
+  hook, then stop: no climax, twist, resolution, or how things turn out. Summarize the
+  first act, not the plot. Essays and how-to pieces can be summarized in full.
 
 These posts are tagged as AI-assisted.
 """
@@ -55,6 +58,8 @@ Requirements:
 - A mini-summary with a light, inviting touch. Interested and friendly, not a sales pitch.
 - No em-dashes. Use a comma, period, or just cut the clause instead.
 - Tell people what the piece is actually about. Summarize the substance, don't just tease it.
+  For fiction or a personal story, that means the premise and setup only. Leave the
+  ending, the twist, and how it turns out for the reader to find.
 - No first person. Do not write as the author or reference their experience.
 - This article may have been published months or years ago, it's being resurfaced from the archive, not freshly written. Do NOT imply recency: no "new piece," "latest piece," "just published," "recently wrote," "this weekend," "this week," or similar. Write as if referencing an existing piece, not announcing one.
 - Gentle hype only, and only the kind the piece earns: surface a specific hook from it and let that do the persuading. Never inflate. No "mind-blowing," "everyone should read this," "you have to see this," or similar.
