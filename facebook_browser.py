@@ -38,6 +38,10 @@ PAGE_TIMEOUT_MS = 30_000
 # A normal quit often hangs, so it gets this long before the process is force-killed.
 CHROME_QUIT_TIMEOUT_S = 10
 CHROME_KILL_TIMEOUT_S = 5
+# Normally the DevTools port is up within a couple of seconds, but the first launch after
+# Chrome auto-updates can take far longer (it failed the 20s limit on Nov 3 and Nov 12,
+# each the morning after an update).
+CHROME_LAUNCH_TIMEOUT_S = 90
 LINK_PREVIEW_WAIT_S = 6
 # Per-keystroke delay. Typing (rather than filling) is what makes Facebook's editor
 # notice the URL and build the link preview.
@@ -94,7 +98,7 @@ def launch_chrome(config: dict, url: str | None = None) -> tuple[int, bool]:
         stderr=subprocess.DEVNULL,
         start_new_session=True,  # survives this process and the launchd job
     )
-    deadline = time.monotonic() + 20
+    deadline = time.monotonic() + CHROME_LAUNCH_TIMEOUT_S
     while time.monotonic() < deadline:
         if _open_pages(port):
             return port, True
