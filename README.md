@@ -88,6 +88,14 @@ Prints the selected content, rationale, and both post drafts. Logs to DB with `d
 ./run.sh --platform bluesky
 ```
 
+### Promote a specific article (e.g. one you just published)
+
+```bash
+./run.sh --url https://billford.io/the-coffee-poltergeist-05875394ef73 --platform facebook
+```
+
+Posts that article instead of the scorer's pick, ignoring the once-a-day limit. `--platform` is required. The article must be in Medium's RSS feed; the catalog refresh at the start of the run picks it up, so if it was published only moments ago and isn't found, wait a few minutes and retry.
+
 ### Verbose output (scorer rationale + full post text)
 
 ```bash
