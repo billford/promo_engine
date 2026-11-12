@@ -212,3 +212,57 @@ def test_post_facebook_marks_fallback_only_in_browser_mode(monkeypatch):
     selected = {"title": "T"}
     assert main_mod._post_facebook(selected, "x", None, {}) == (None, "reminder_fallback")  # pylint: disable=protected-access
     assert main_mod._post_facebook(selected, "x", None, {"facebook_mode": "reminder"}) == (None, None)  # pylint: disable=protected-access
+
+
+def test_content_for_url_matches_custom_domain_and_keeps_given_url(db_path):
+    import main as main_mod
+    with get_conn(db_path) as conn:
+        upsert_content(conn, {
+            "id": "https://billfordx.medium.com/a-story-05875394ef73?source=rss-1",
+            "source": "medium",
+            "title": "A Story",
+            "url": "https://billfordx.medium.com/a-story-05875394ef73?source=rss-1",
+            "published_date": "2026-11-12",
+            "description": ARTICLE_BODY,
+            "tags": [],
+        })
+        content = main_mod._content_for_url(conn, "https://billford.io/a-story-05875394ef73")  # pylint: disable=protected-access
+
+    assert content["content_id"] == "medium:05875394ef73"
+    assert content["title"] == "A Story"
+    assert content["url"] == "https://billford.io/a-story-05875394ef73"
+
+
+def test_content_for_url_rejects_uncataloged_url(db_path):
+    import main as main_mod
+    with get_conn(db_path) as conn, pytest.raises(RuntimeError, match="not in the catalog"):
+        main_mod._content_for_url(conn, "https://billford.io/unknown-0123456789ab")  # pylint: disable=protected-access
+
+
+def test_run_platform_with_url_ignores_daily_limit_and_scorer(db_path, monkeypatch):
+    import main as main_mod
+    _no_new_pick(monkeypatch)
+    posted = []
+    monkeypatch.setattr(main_mod, "_post_selected",
+                        lambda platform, _conn, _config, _args, selected: posted.append((platform, selected["url"])))
+    args = argparse.Namespace(dry_run=False, verbose=False, url="https://billford.io/x-0123456789ab")
+
+    with get_conn(db_path) as conn:
+        _insert_content_and_post(conn, "http://example.com/today", "facebook")  # already posted today
+        upsert_content(conn, {
+            "id": "https://billfordx.medium.com/x-0123456789ab", "source": "medium", "title": "X",
+            "url": "https://billfordx.medium.com/x-0123456789ab", "published_date": "2026-11-12",
+            "description": ARTICLE_BODY, "tags": [],
+        })
+        main_mod.run_platform("facebook", conn, {"timezone": "America/New_York"}, args)
+
+    assert posted == [("facebook", "https://billford.io/x-0123456789ab")]
+
+
+def test_url_requires_explicit_platform(monkeypatch):
+    import main as main_mod
+    monkeypatch.setattr("sys.argv", ["main.py", "--url", "https://billford.io/x-0123456789ab"])
+    with pytest.raises(SystemExit):
+        main_mod.parse_args()
+    monkeypatch.setattr("sys.argv", ["main.py"])
+    assert main_mod.parse_args().platform == "all"

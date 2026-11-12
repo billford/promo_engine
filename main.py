@@ -32,12 +32,22 @@ def parse_args():
     parser.add_argument(
         "--platform",
         choices=["linkedin", "bluesky", "facebook", "all"],
-        default="all",
-        help="Which platform(s) to post to (default: all)",
+        default=None,
+        help="Which platform(s) to post to (default: all; required with --url)",
+    )
+    parser.add_argument(
+        "--url",
+        help="Promote this article (e.g. one just published) instead of the scorer's pick. "
+        "Must already be in the catalog, which the collector refreshes first. Ignores the "
+        "once-a-day limit.",
     )
     parser.add_argument("--verbose", action="store_true", help="Print scorer rationale and full post text")
     parser.add_argument("--report", action="store_true", help="Print weekly posting report and exit")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.url and args.platform is None:
+        parser.error("--url needs --platform, e.g. --platform facebook")
+    args.platform = args.platform or "all"
+    return args
 
 
 def print_weekly_report(conn) -> None:
@@ -142,8 +152,39 @@ def _print_preview(platform: str, post_text: str, config: dict, tz: ZoneInfo, dr
         print(f"Would create Reminder due: {due_dt.strftime('%Y-%m-%dT%H:%M:%S')} local")
 
 
+def _content_for_url(conn, url: str) -> dict:
+    """The catalog item behind url, shaped like scorer.pick_content's result.
+
+    The post links to url exactly as given (a custom domain, say), but everything else,
+    including the content_id that cooldowns key on, comes from the catalog row.
+    """
+    from db import canonical_content_id
+    row = conn.execute(
+        "SELECT id, title, source, description, content_type FROM content WHERE id = ?",
+        (canonical_content_id(url),),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(
+            f"{url} is not in the catalog. If it was just published, Medium's feed may "
+            "not list it yet; try again in a few minutes."
+        )
+    return {
+        "content_id": row[0],
+        "title": row[1],
+        "url": url,
+        "source": row[2],
+        "description": row[3] or "",
+        "content_type": row[4],
+        "rationale": "Requested with --url.",
+    }
+
+
 def run_platform(platform: str, conn, config: dict, args) -> None:
     tz = ZoneInfo(config.get("timezone", "America/New_York"))
+    requested_url = getattr(args, "url", None)
+    if requested_url:
+        _post_selected(platform, conn, config, args, _content_for_url(conn, requested_url))
+        return
     if not args.dry_run and platform == "facebook" and _facebook_uses_browser(config):
         fallback = get_todays_fallback(conn, platform, tz)
         if fallback:
@@ -159,7 +200,11 @@ def run_platform(platform: str, conn, config: dict, args) -> None:
 
     from scorer import pick_content
     selected = pick_content(conn, config, [platform], content_type_pref)
+    _post_selected(platform, conn, config, args, selected)
 
+
+def _post_selected(platform: str, conn, config: dict, args, selected: dict) -> None:
+    tz = ZoneInfo(config.get("timezone", "America/New_York"))
     content_type = selected.get("content_type") or "unclassified"
     print(f"\nSelected for {platform}: \"{selected['title']}\" ({selected['source']}, {content_type})")
     if args.verbose:
